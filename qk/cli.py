@@ -47,8 +47,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--fit", default="audio", choices=["audio", "video"],
                    help="audio = durasi video mengikuti murottal; video = sebaliknya")
     p.add_argument("--no-karaoke", action="store_true", help="matikan highlight per kata")
-    p.add_argument("--no-latin", action="store_true", help="sembunyikan teks latin")
     p.add_argument("--no-arti", action="store_true", help="sembunyikan terjemahan")
+    p.add_argument("--gelap", type=float, default=0.62, metavar="F",
+                   help="peredup video, 0-1 (1 = biarkan terang, default 0.62)")
     p.add_argument("--no-header", action="store_true", help="sembunyikan judul surah")
     p.add_argument("--scale", type=float, default=1.0, help="skala ukuran teks (mis. 0.9)")
     p.add_argument("--out", default=None, help="path output mp4")
@@ -91,8 +92,10 @@ def main(argv: list[str] | None = None) -> int:
         a.video, a.surah, af, at,
         qari=qari, layout=a.layout, out=a.out, align=a.align, scale=a.scale,
         workdir=a.workdir,
-        karaoke=not a.no_karaoke, show_latin=not a.no_latin, show_arti=not a.no_arti,
+        karaoke=not a.no_karaoke,
+        show_arti=not a.no_arti,
         show_header=not a.no_header, fit=a.fit, crf=a.crf, preset=a.preset,
+        brightness=a.gelap,
         dry_run=a.dry_run, force=a.force,
     )
     mode = {"qalign": "per kata (quran-align)", "proportional": "bagi rata (perkiraan)"}[res.align]

@@ -1,7 +1,7 @@
 # quran-karaoke
 
 Satu video masuk → satu video keluar: murottal + subtitle Al-Quran bergaya karaoke
-(highlight per kata, Arab + Latin + terjemahan) dibakar ke dalam video.
+(highlight per kata, tulisan Arab + terjemahan Indonesia) dibakar ke dalam video.
 
 ```bash
 python3 -m qk.cli video.mp4 --surah 112 --qari 05           # Al-Ikhlas, al-Afasy
@@ -16,7 +16,8 @@ python3 -m qk.cli --daftar-qari                              # daftar qari yang 
 | `--qari QQ` | `03` | lihat `--daftar-qari` |
 | `--layout` | `portrait` | `portrait` / `landscape` / `square` |
 | `--fit` | `audio` | `audio` = panjang ikut murottal (frame terakhir ditahan) |
-| `--no-karaoke` `--no-latin` `--no-arti` `--no-header` | off | matikan lapisan teks |
+| `--no-karaoke` `--no-arti` `--no-header` | off | matikan lapisan teks |
+| `--gelap F` | `0.62` | peredup video, 0-1 (1 = biarkan terang) |
 | `--crf` `--preset` `--scale` | `20` `medium` `1.0` | kualitas & ukuran |
 
 Output: `output/<slug>.mp4` + `work/<video>/sNNN_.../` (`.ass` + `murottal.mp3`, untuk re-render).
@@ -41,4 +42,4 @@ men-download ulang. Font Amiri Quran di-vendor di `fonts/`.
 
 Butuh `ffmpeg` dengan libass + HarfBuzz (untuk shaping Arab/RTL).
 
-Cek cepat: `python3 tests/test_qalign.py`
+Cek cepat: `python3 tests/test_qalign.py && python3 tests/test_emit.py`
