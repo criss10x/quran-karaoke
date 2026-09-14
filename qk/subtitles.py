@@ -67,31 +67,36 @@ def styles(width: int, height: int, scale: float = 1.0) -> list[ass.Style]:
 
 def _emit(doc: ass.Document, line: Line, style: str, x: int, y: int, tokens: list[str],
           base: str, highlight: str, *, karaoke: bool, clamp_to: tuple[float, float]) -> None:
-    """One visible line, re-emitted per karaoke step so exactly one group is coloured."""
+    """One visible line, re-emitted per karaoke step so exactly one group is coloured.
+
+    `tokens` is what actually gets drawn: the steps' own Arabic words for the Ar style, or the
+    transliteration/translation for Lat/Id. Step boundaries index into that list, which is why
+    callers pass the same number of tokens they have steps' worth of words.
+    """
     if not tokens:
         return
     lo, hi = clamp_to
-    if len(tokens) <= 1 or len(line.steps) <= 1 or not karaoke:
+    spans, total = [], 0
+    for st in line.steps:
+        spans.append((total, total + len(st.tokens)))
+        total += len(st.tokens)
+    if not karaoke or len(tokens) != total:
+        # plain line, no highlight (also the safety net when a caller's word count differs)
         s, e = max(line.start, lo), min(line.end, hi)
         text = f"{ass.pos(x, y, 2)}{ass.esc(' '.join(tokens))}"
         doc.events.append(ass.Event(s, max(e, s + MIN_SHOW), style, text))
         return
 
-    idx = 0
+    # One event per step. Tokens are space-separated: Arabic is cursive, so joining them bare
+    # would run the words together (`غير` + `المغضوب` reads as one word). One tag per colour run.
     for si, step in enumerate(line.steps):
-        count = len(step.tokens)
-        groups = []
-        for gi in range(count):
-            active = idx + gi
-            groups.append((active, si == si))
-        # build the token list with only this step's token range highlighted
-        parts = []
-        cursor = 0
-        for sj, st in enumerate(line.steps):
-            for tk in st.tokens:
-                colour = highlight if sj == si else base
-                parts.append(f"{{\\c{colour}}}{ass.esc(tk)}")
-                cursor += 1
+        parts, prev = [], None
+        for sj, (b0, b1) in enumerate(spans):
+            colour = highlight if sj == si else base
+            if colour != prev:
+                parts.append(f"{{\\c{colour}}}")
+                prev = colour
+            parts.extend(f"{ass.esc(tk)} " for tk in tokens[b0:b1])
         s = max(step.start, lo)
         e = min(step.end if si < len(line.steps) - 1 else line.end, hi)
         # a step should stay visible until the next step begins
@@ -101,7 +106,7 @@ def _emit(doc: ass.Document, line: Line, style: str, x: int, y: int, tokens: lis
             e = s
         if e - s < MIN_SHOW:
             e = s + MIN_SHOW
-        doc.events.append(ass.Event(s, e, style, f"{ass.pos(x, y, 2)}{''.join(parts)}"))
+        doc.events.append(ass.Event(s, e, style, f"{ass.pos(x, y, 2)}{''.join(parts).rstrip()}"))
 
 
 def build_document(timeline: Timeline, layout: str = "portrait", *, scale: float = 1.0,
