@@ -21,6 +21,33 @@ python3 -m qk.cli /tmp/user_video.mp4 --surah 4 --aya 148 --qari 05 --dry-run
 # -> work/user_video/s004_148_05/an-nisa-05.ass
 ```
 
+## Run the second gate too
+
+```bash
+python3 scripts/check_join_blocks.py \
+  --ass work/user_video/s004_148_05/an-nisa-05.ass \
+  --video output/kris_annisa_148.mp4 --times 1 7 11
+```
+
+It renders nothing and never looks at the two candidate renders — it isolates the subtitle by
+luminance and counts ink blocks in the Arabic band, comparing against the range the text
+implies (one block per word, plus one per word-internal detached group: a non-joining letter
+`ا د ذ ر ز و` followed by another letter). Measured on the same clip:
+
+| frame | t=1s | t=7s | t=11s |
+|---|---|---|---|
+| delivered | **9** | **8** | **4** |
+| `Spacing 0.4` burn | 19 | 15 | 12 |
+
+Delivered is in range at every timestamp, the broken burn is out of range at every timestamp,
+and it exits 1 for the latter. Because its mechanism shares nothing with
+`verify_arabic_joins.py`, agreement between the two is real corroboration rather than the same
+artefact measured twice. Run both.
+
+Precondition: a 240 luma threshold has to isolate the subtitle. Verify it on your source — on
+these renders the background peaks at luma 200 above the bands (dimmed by `--gelap 0.62`). Pass
+`--band y0 y1` if auto-detection grabs the wrong region.
+
 ## How it decides
 
 A clean re-render proves nothing, so the script renders the real `.ass` twice on black —
