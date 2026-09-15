@@ -42,4 +42,22 @@ men-download ulang. Font Amiri Quran di-vendor di `fonts/`.
 
 Butuh `ffmpeg` dengan libass + HarfBuzz (untuk shaping Arab/RTL).
 
+## Tulisan Arab putus-putus? Baca ini dulu
+
+Penyebabnya hampir selalu satu angka: `Spacing` bukan `0.0` di style Arab. libass lalu
+berhenti pakai complex shaper HarfBuzz dan menggambar tiap huruf terpisah, jadi
+sambungan kursifnya putus (`qk/subtitles.py` sudah dipatok `spacing=0.0`). Latin tidak
+terpengaruh, itu sebabnya kelihatan seperti masalah font.
+
+Jangan percaya re-render bersih — buktikan di file yang benar-benar dikirim:
+
+```bash
+python3 scripts/verify_arabic_joins.py \
+  --ass work/user_video/s004_148_05/an-nisa-05.ass \
+  --video output/kris_annisa_148.mp4 --fonts fonts --times 1 7 11
+```
+
+Exit 0 = video terkirim cocok dengan style benar di **semua** baris. Detail metode,
+angka terukurnya, dan cara membuktikan check-nya bisa gagal: `docs/verifying-arabic-joins.md`.
+
 Cek cepat: `python3 tests/test_qalign.py && python3 tests/test_emit.py`
