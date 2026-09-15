@@ -88,7 +88,9 @@ class Document:
             "[Script Info]",
             f"Title: {self.title}",
             "ScriptType: v4.00+",
-            "WrapStyle: 2",
+            # 0 = libass wraps at the margins: long ayahs break onto new lines instead of
+            # running past the left/right edges (WrapStyle 2 disables wrapping entirely).
+            "WrapStyle: 0",
             "ScaledBorderAndShadow: yes",
             "YCbCr Matrix: TV.709",
             f"PlayResX: {self.width}",

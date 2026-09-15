@@ -1,5 +1,6 @@
 """Self-check: two-band events (Arabic + Indonesian), karaoke on both, no \\pos/\\an per band."""
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -7,10 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from qk import ass, subtitles
 from qk.build import Line, Step
 
-import re
-
 BASE, GOLD, ARTI = "&H00FFFFFF", "&H0046C2FE", "&H00E8E8E8"
-BREAK = "\\N{\\rArti}"
 TAGS = re.compile(r"\{[^}]*\}")
 
 
@@ -50,29 +48,44 @@ def test_arabic_words_keep_their_spaces():
     assert "غير المغضوب" in ev[0].text, ev[0].text
 
 
-def test_two_bands_in_one_event():
+def test_both_bands_present_with_translation_coloured():
     line = _line((["أ", "ب"], 0.0, 1.0), (["ج"], 1.0, 2.0))
     ev = _emit(line, ["أ", "ب", "ج"], ["one", "two", "three"])
-    assert BREAK in ev[0].text, ev[0].text
-    head, body = ev[0].text.split(BREAK, 1)
-    assert body.count(GOLD) == 1, body
-    assert head.count(GOLD) == 1, head
-    assert "one two three" in _plain(body), body
+    text = ev[0].text
+    assert "أ" in text and "one" in text and "three" in text, text
+    assert text.count(GOLD) == 2, text      # one arabic step + the matching translation step
+    assert _plain(text).index("ج") < _plain(text).index("one"), _plain(text)
 
 
-def test_translation_without_token_match_rides_along_plain():
+def test_translation_without_token_match_still_shown():
     line = _line((["أ", "ب"], 0.0, 1.0), (["ج"], 1.0, 2.0))
     ev = _emit(line, ["أ", "ب", "ج"], ["terjemahan bebas"])
-    body = ev[0].text.split(BREAK, 1)[1]
-    # no invented word alignment: the translation shows plain, colour coming from the Arti style
-    assert GOLD not in body, body
-    assert "terjemahan bebas" in body, body
+    assert "terjemahan bebas" in ev[0].text, ev[0].text
+
+
+def test_line_break_every_five_words():
+    """Long ayahs must break, or the doubled font runs off both screen edges."""
+    words = [f"ك{i}" for i in range(16)]
+    ev = _emit(_line((words, 0.0, 1.0)), words, [])
+    assert ev[0].text.count("\\N") == 3, ev[0].text          # 16 words -> break after 5, 10, 15
+    ev5 = _emit(_line((words[:5], 0.0, 1.0)), words[:5], [])
+    assert ev5[0].text.count("\\N") == 0, ev5[0].text
+
+
+def test_breaks_do_not_split_the_translation_from_the_arabic():
+    words = [f"ك{i}" for i in range(7)]
+    arti = ["a", "b", "c", "d", "e", "f", "g"]
+    ev = _emit(_line((words, 0.0, 1.0)), words, arti)
+    text = ev[0].text
+    # arabic block (2 lines) then the translation block; order is preserved
+    assert _plain(text).index("ك6") < _plain(text).index("a"), _plain(text)
+    # 1 break inside the arabic block + 1 joining the blocks + 1 inside the translation
+    assert text.count("\\N") == 3, text
 
 
 def test_no_pos_or_an_codes():
     """Centring comes from Alignment=5 in the style, so events carry no positioning overrides."""
-    line = _line((["أ"], 0.0, 1.0))
-    ev = _emit(line, ["أ"], ["satu"])
+    ev = _emit(_line((["أ"], 0.0, 1.0)), ["أ"], ["satu"])
     assert "\\pos" not in ev[0].text and "\\an" not in ev[0].text, ev[0].text
 
 
@@ -82,11 +95,15 @@ def test_karaoke_off_emits_plain_line():
     assert len(ev) == 1 and GOLD not in ev[0].text
 
 
-def test_styles_are_centred():
+def test_styles_are_centred_and_doubled():
     st = {s.name: s for s in subtitles.styles(1080, 1920)}
     assert st["Ar"].align == 5 and st["Arti"].align == 5
-    assert st["Arti"].margin_v < 0            # lifts the translation above the arabic band
-    assert st["Ar"].size > 60 and st["Ar"].size > st["Arti"].size
+    assert st["Ar"].size >= 160 and st["Arti"].size >= 78      # doubled from 81 / 39
+
+
+def test_wrapstyle_allows_wrapping():
+    doc = ass.Document(width=1080, height=1920, styles=[])
+    assert "WrapStyle: 0" in doc.render()
 
 
 if __name__ == "__main__":

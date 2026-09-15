@@ -38,10 +38,9 @@ ACTIVE = "&H0046C2FE"      # warm gold (ASS is &HAABBGGRR, so this is R=254 G=19
 ARTI = "&H00E8E8E8"
 MIN_SHOW = 0.14            # seconds; keeps very short steps visible
 
-AR_FRAC = 0.075            # arabic size, fraction of the shorter frame side
-ARTI_FRAC = 0.037
-# ponytail: lift tuned against 1080x1920; one arabic line height, so it tracks AR_FRAC*unit.
-ARTI_LIFT = 0.075
+AR_FRAC = 0.150            # arabic size, fraction of the shorter frame side
+ARTI_FRAC = 0.074
+BREAK_EVERY = 5            # words per screen line; keeps long ayahs off the frame edges
 _ARTI_BREAK = "\\N{\\rArti}"
 
 
@@ -58,8 +57,7 @@ def styles(width: int, height: int, scale: float = 1.0) -> list[ass.Style]:
     )
     arti = ass.Style(
         name="Arti", font=FONT_LATIN, size=arti_size, primary=ARTI,
-        outline=2.0, shadow=0.8, align=5, margin_l=margin, margin_r=margin,
-        margin_v=-int(unit * ARTI_LIFT * scale),
+        outline=2.0, shadow=0.8, align=5, margin_l=margin, margin_r=margin, margin_v=0,
     )
     head = ass.Style(
         name="Head", font=FONT_LATIN, size=int(unit * 0.028 * scale), primary=ACTIVE,
@@ -70,19 +68,31 @@ def styles(width: int, height: int, scale: float = 1.0) -> list[ass.Style]:
 
 
 def _colourise(tokens: list[str], spans: list[tuple[int, int]], active: int,
-               base: str, highlight: str) -> str:
+               base: str, highlight: str, *, max_words: int = BREAK_EVERY) -> str:
     """Tokens as ASS text: one ``{\\c}`` tag per colour run, words space-separated.
 
     Words must stay space-separated — Arabic is cursive, so bare concatenation would run
-    `غير` and `المغضوب` together into a single word.
+    `غير` and `المغضوب` together into a single word. A hard line break is inserted every
+    ``max_words`` words so a long ayah wraps onto several screen lines instead of running
+    past the left and right edges (portrait width, doubled font size, has no room for ~5
+    Arabic words in one line).
     """
-    parts, prev = [], None
+    parts, prev, seen = [], None, 0
+    if not tokens:
+        return ""
+    if not spans:
+        # no karaoke steps to colour: draw everything in `base` as a single run
+        spans, active = [(0, len(tokens))], -1
     for si, (b0, b1) in enumerate(spans):
         colour = highlight if si == active else base
         if colour != prev:
             parts.append(f"{{\\c{colour}}}")
             prev = colour
-        parts.extend(f"{ass.esc(tk)} " for tk in tokens[b0:b1])
+        for tk in tokens[b0:b1]:
+            if seen and seen % max_words == 0:
+                parts.append("\\N")
+            parts.append(f"{ass.esc(tk)} ")
+            seen += 1
     return "".join(parts).rstrip()
 
 
@@ -103,12 +113,12 @@ def _emit(doc: ass.Document, line: Line, ar_tokens: list[str], arti_tokens: list
         spans.append((total, total + len(st.tokens)))
         total += len(st.tokens)
 
-    tail = f"{_ARTI_BREAK}{ass.esc(' '.join(arti_tokens))}" if arti_tokens else ""
+    plain_arti = _colourise(arti_tokens, [], -1, ARTI, ACTIVE) if arti_tokens else ""
     arti_spans = spans if len(arti_tokens) == total else None
 
     def frame(active: int | None) -> str:
         if active is None:
-            head = ass.esc(" ".join(ar_tokens))
+            head = _colourise(ar_tokens, [], -1, BASE, ACTIVE)
         else:
             head = _colourise(ar_tokens, spans, active, BASE, ACTIVE)
         if not arti_tokens:
@@ -116,8 +126,10 @@ def _emit(doc: ass.Document, line: Line, ar_tokens: list[str], arti_tokens: list
         if active is not None and arti_spans:
             body = _colourise(arti_tokens, arti_spans, active, ARTI, ACTIVE)
         else:
-            body = ass.esc(" ".join(arti_tokens))
-        return f"{head}{_ARTI_BREAK}{body}"
+            body = plain_arti
+        # the translation is stacked *under* the arabic block with a bare \N, so its own lines
+        # continue from where the arabic lines ended instead of restarting at the frame centre
+        return f"{head}\\N{body}"
 
     if not karaoke or len(ar_tokens) != total:
         # plain band, no highlight (also the safety net when a caller's word count differs)

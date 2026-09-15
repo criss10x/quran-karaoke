@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import re
 import subprocess
 
 from . import subtitles
@@ -66,14 +67,14 @@ def render(
     timeline = build_timeline(
         surah, ayah_from, ayah_to, qari=qari, align=align, workdir=workdir, force=force
     )
-    ass_path = os.path.join(workdir, f"{timeline.surah_name.lower().replace(' ', '-')}-{timeline.qari}.ass")
+    ass_path = os.path.join(workdir, f"{_slug(timeline.surah_name)}-{timeline.qari}.ass")
     doc = subtitles.build_document(
         timeline, layout=layout, scale=scale, karaoke=karaoke,
         show_arti=show_arti, show_header=show_header,
     )
     subtitles.write_ass(doc, ass_path)
 
-    out = out or os.path.join("output", f"{stem}_{timeline.surah_name.lower().replace(' ', '-')}.mp4")
+    out = out or os.path.join("output", f"{stem}_{_slug(timeline.surah_name)}.mp4")
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
 
     if not dry_run:
@@ -94,6 +95,15 @@ def _fonts_dir() -> str | None:
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     d = os.path.join(here, "fonts")
     return d if os.path.isdir(d) else None
+
+
+def _slug(name: str) -> str:
+    """Filesystem- and ffmpeg-filter-safe form of a surah name.
+
+    Some names carry punctuation ("An-Nisa'"), which the ass= filter path rejects, so keep
+    only alphanumerics and hyphens.
+    """
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 
 def _burn(video, audio, ass_path, out, *, layout, fit, cover, crf, preset, fonts_dir,
