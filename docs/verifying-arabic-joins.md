@@ -13,6 +13,14 @@ python3 scripts/verify_arabic_joins.py \
 
 Exit 0 = the delivered file matches the good style on **every** timestamp.
 
+The `--ass` path is gitignored (`work/`), so on a fresh clone build one first — this writes
+the `.ass` without encoding a video (~seconds, vs ~20 min for the full render):
+
+```bash
+python3 -m qk.cli /tmp/user_video.mp4 --surah 4 --aya 148 --qari 05 --dry-run
+# -> work/user_video/s004_148_05/an-nisa-05.ass
+```
+
 ## How it decides
 
 A clean re-render proves nothing, so the script renders the real `.ass` twice on black —
