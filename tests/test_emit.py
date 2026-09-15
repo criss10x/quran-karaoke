@@ -86,6 +86,15 @@ def test_styles_are_centred_and_doubled():
     assert st["Ar"].size >= 160 and st["Arti"].size >= 78      # doubled from 81 / 39
 
 
+def test_arabic_spacing_is_zero():
+    """Non-zero ASS Spacing kills complex shaping: libass then emits isolated
+    per-glyph forms, so the cursive joins break. Measured on the 5-word An-Nisa
+    line: Spacing 0.0 -> 8 ink blocks (correct), Spacing 0.4 -> 15 (letters
+    pulled apart). Arabic never needs letter tracking."""
+    st = {s.name: s for s in subtitles.styles(1080, 1920)}
+    assert st["Ar"].spacing == 0.0, st["Ar"].spacing
+
+
 def test_wrapstyle_allows_wrapping():
     doc = ass.Document(width=1080, height=1920, styles=[])
     assert "WrapStyle: 0" in doc.render()

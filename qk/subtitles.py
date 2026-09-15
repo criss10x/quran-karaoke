@@ -50,7 +50,9 @@ def styles(width: int, height: int, scale: float = 1.0) -> list[ass.Style]:
     arabic = ass.Style(
         name="Ar", font=FONT_ARABIC, size=ar_size, primary=BASE,
         outline=max(2.0, ar_size * 0.045), shadow=max(1.0, ar_size * 0.02),
-        align=5, margin_l=margin, margin_r=margin, margin_v=0, spacing=0.4,
+        # spacing MUST stay 0.0: any non-zero Spacing makes libass fall back to isolated
+        # per-glyph forms and the cursive joins break (measured: 8 ink blocks -> 15).
+        align=5, margin_l=margin, margin_r=margin, margin_v=0, spacing=0.0,
     )
     arti = ass.Style(
         name="Arti", font=FONT_LATIN, size=arti_size, primary=ARTI,
