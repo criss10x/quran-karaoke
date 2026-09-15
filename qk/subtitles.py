@@ -1,21 +1,24 @@
 """Turn a Timeline into the ASS subtitle file and the ffmpeg command that burns it in.
 
-Styling notes
--------------
-* Two bands only: the Arabic line (Amiri Quran, vendored in fonts/) and its Indonesian
-  translation under it. No transliteration.
-* Both bands use ``Alignment=5`` (middle centre). That centres them on the frame and stacks
-  them around the vertical middle with **no** ``\\pos``/``\\an`` overrides in the event text at
-  all: align=5 also lifts the bottom-margin clamp, so the translation band is simply offset with
-  a negative ``MarginV``.
-* The two bands are glued into one event: the Arabic run, then a literal ``\\N`` (hard line
-  break), then ``{\\rArti}`` to switch font/size, then the translation. Switching styles mid-event
-  keeps both bands one timed unit and lets the karaoke highlight walk through both at once.
-* Highlighting works by re-emitting the whole line with a single step recoloured. libass is
-  given one shaped run and only swaps fill colours, so RTL word order, ligatures and mark
-  positioning stay correct. (libass' ``\\k`` karaoke timing is applied in logical order, which is
-  unreliable on right-to-left text, hence this approach.)
-* Preview hint: ``ffplay video.mp4 -vf "subtitles=file.ass"``, or use MKV/MP4 soft subs.
+Why the Arabic is emitted backwards
+----------------------------------
+libass lays out the text as a sequence of *runs*, where a run is broken by any override tag
+that actually changes something (a ``{\\c...}`` that repeats the style's own colour is a no-op
+and gets dropped, which is why this subtlety hid for so long). Runs are then placed
+left-to-right in emission order; bidi only reorders the characters *inside* a run.
+
+So for right-to-left Arabic with a per-word colour highlight:
+
+* emitting the words in logical order mirrors the line, and the highlight walks the wrong way;
+* emitting each line's words in **reverse** logical order restores the correct right-to-left
+  layout, and the highlight then walks right-to-left as it should.
+
+Each word keeps its own ``{\\c}`` tag, so the karaoke highlight is a plain colour swap — no
+``\\k`` timing (libass applies ``\\k`` in logical order, unusable on Arabic) and no clip
+geometry to measure.
+
+The Indonesian translation underneath is left-to-right text, so it is emitted in logical
+order, one colour tag per word, exactly as it reads.
 """
 from __future__ import annotations
 
@@ -41,7 +44,6 @@ MIN_SHOW = 0.14            # seconds; keeps very short steps visible
 AR_FRAC = 0.150            # arabic size, fraction of the shorter frame side
 ARTI_FRAC = 0.074
 BREAK_EVERY = 5            # words per screen line; keeps long ayahs off the frame edges
-_ARTI_BREAK = "\\N{\\rArti}"
 
 
 def styles(width: int, height: int, scale: float = 1.0) -> list[ass.Style]:
@@ -67,43 +69,42 @@ def styles(width: int, height: int, scale: float = 1.0) -> list[ass.Style]:
     return [arabic, arti, head]
 
 
-def _colourise(tokens: list[str], spans: list[tuple[int, int]], active: int,
-               base: str, highlight: str, *, max_words: int = BREAK_EVERY) -> str:
-    """Tokens as ASS text: one ``{\\c}`` tag per colour run, words space-separated.
+def _token_colours(count: int, spans: list[tuple[int, int]], active: int | None,
+                   base: str, highlight: str) -> list[str]:
+    out = [base] * count
+    if active is not None and 0 <= active < len(spans):
+        for i in range(*spans[active]):
+            if i < count:
+                out[i] = highlight
+    return out
 
-    Words must stay space-separated — Arabic is cursive, so bare concatenation would run
-    `غير` and `المغضوب` together into a single word. A hard line break is inserted every
-    ``max_words`` words so a long ayah wraps onto several screen lines instead of running
-    past the left and right edges (portrait width, doubled font size, has no room for ~5
-    Arabic words in one line).
-    """
-    parts, prev, seen = [], None, 0
-    if not tokens:
-        return ""
-    if not spans:
-        # no karaoke steps to colour: draw everything in `base` as a single run
-        spans, active = [(0, len(tokens))], -1
-    for si, (b0, b1) in enumerate(spans):
-        colour = highlight if si == active else base
-        if colour != prev:
-            parts.append(f"{{\\c{colour}}}")
-            prev = colour
-        for tk in tokens[b0:b1]:
-            if seen and seen % max_words == 0:
-                parts.append("\\N")
-            parts.append(f"{ass.esc(tk)} ")
-            seen += 1
-    return "".join(parts).rstrip()
+
+def _arabic(tokens: list[str], colours: list[str]) -> str:
+    """Arabic band: a hard line break every ``BREAK_EVERY`` words, each screen line's words
+    emitted in reverse logical order so libass' run placement produces right-to-left text."""
+    lines = []
+    for c0 in range(0, len(tokens), BREAK_EVERY):
+        chunk = list(range(c0, min(c0 + BREAK_EVERY, len(tokens))))
+        lines.append(" ".join(f"{{\\c{colours[i]}}}{ass.esc(tokens[i])}" for i in reversed(chunk)))
+    return "\\N".join(lines) or ""
+
+
+def _arti(tokens: list[str], colours: list[str]) -> str:
+    """Translation band: ordinary left-to-right text, so logical order and one tag per word."""
+    lines = []
+    for c0 in range(0, len(tokens), BREAK_EVERY):
+        chunk = range(c0, min(c0 + BREAK_EVERY, len(tokens)))
+        lines.append(" ".join(f"{{\\c{colours[i]}}}{ass.esc(tokens[i])}" for i in chunk))
+    return "\\N".join(lines) or ""
 
 
 def _emit(doc: ass.Document, line: Line, ar_tokens: list[str], arti_tokens: list[str], *,
           karaoke: bool, clamp_to: tuple[float, float]) -> None:
     """Emit one two-band event per karaoke step (or a single plain event).
 
-    Step boundaries index the Arabic tokens; the translation is coloured step-by-step only when
-    its own word count lines up, and otherwise rides along unhighlighted — guessing a word
-    alignment for a translation that doesn't share the Arabic word count would highlight the
-    wrong phrase.
+    Step boundaries index the Arabic tokens. The translation is highlighted step-by-step only
+    when its word count lines up; otherwise it rides along unhighlighted, because guessing an
+    alignment would light up the wrong phrase.
     """
     if not ar_tokens:
         return
@@ -113,25 +114,19 @@ def _emit(doc: ass.Document, line: Line, ar_tokens: list[str], arti_tokens: list
         spans.append((total, total + len(st.tokens)))
         total += len(st.tokens)
 
-    plain_arti = _colourise(arti_tokens, [], -1, ARTI, ACTIVE) if arti_tokens else ""
-    arti_spans = spans if len(arti_tokens) == total else None
+    arti_spans = spans if (arti_tokens and len(arti_tokens) == total) else None
 
-    def frame(active: int | None) -> str:
-        if active is None:
-            head = _colourise(ar_tokens, [], -1, BASE, ACTIVE)
-        else:
-            head = _colourise(ar_tokens, spans, active, BASE, ACTIVE)
+    def frame(si: int | None) -> str:
+        ar = _arabic(ar_tokens, _token_colours(len(ar_tokens), spans, si, BASE, ACTIVE))
         if not arti_tokens:
-            return head
-        if active is not None and arti_spans:
-            body = _colourise(arti_tokens, arti_spans, active, ARTI, ACTIVE)
-        else:
-            body = plain_arti
-        # the translation is stacked *under* the arabic block with a bare \N, so its own lines
-        # continue from where the arabic lines ended instead of restarting at the frame centre
-        return f"{head}\\N{body}"
+            return ar
+        arti_cols = _token_colours(len(arti_tokens), arti_spans or [], si if arti_spans else None,
+                                   ARTI, ACTIVE)
+        # the translation sits under the Arabic block; its lines continue from where the
+        # Arabic lines ended instead of restarting at the frame centre
+        return f"{ar}\\N{{\\rArti}}{_arti(arti_tokens, arti_cols)}"
 
-    if not karaoke or len(ar_tokens) != total:
+    if not karaoke or total != len(ar_tokens):
         # plain band, no highlight (also the safety net when a caller's word count differs)
         s, e = max(line.start, lo), min(line.end, hi)
         doc.events.append(ass.Event(s, max(e, s + MIN_SHOW), "Ar", frame(None)))
@@ -140,8 +135,7 @@ def _emit(doc: ass.Document, line: Line, ar_tokens: list[str], arti_tokens: list
     for si, step in enumerate(line.steps):
         s = max(step.start, lo)
         e = min(step.end if si < len(line.steps) - 1 else line.end, hi)
-        # a step should stay visible until the next step begins
-        if si < len(line.steps) - 1:
+        if si < len(line.steps) - 1:                 # keep a step on screen until the next one
             e = min(line.steps[si + 1].start, hi)
         if e < s:
             e = s
@@ -152,7 +146,7 @@ def _emit(doc: ass.Document, line: Line, ar_tokens: list[str], arti_tokens: list
 
 def build_document(timeline: Timeline, layout: str = "portrait", *, scale: float = 1.0,
                    karaoke: bool = True, show_arti: bool = True,
-                   show_header: bool = True) -> ass.Document:
+                   show_header: bool = True, fonts_dir: str | None = None) -> ass.Document:
     if layout not in LAYOUTS:
         raise ValueError(f"layout '{layout}' tidak dikenal (pilih: {', '.join(LAYOUTS)})")
     width, height = LAYOUTS[layout]
@@ -160,7 +154,8 @@ def build_document(timeline: Timeline, layout: str = "portrait", *, scale: float
                        title=f"Quran {timeline.surah} — {timeline.surah_name}")
 
     if show_header:
-        head = f"{timeline.surah_name} · {timeline.surah_arti}" if timeline.surah_arti else timeline.surah_name
+        head = (f"{timeline.surah_name} · {timeline.surah_arti}"
+                if timeline.surah_arti else timeline.surah_name)
         doc.events.append(
             ass.Event(0.0, min(timeline.duration, 4.0), "Head",
                       f"{ass.pos(width // 2, int(height * 0.045), 8)}{ass.esc(head)}")

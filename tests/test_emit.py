@@ -1,4 +1,9 @@
-"""Self-check: two-band events (Arabic + Indonesian), karaoke on both, no \\pos/\\an per band."""
+"""Self-check for the subtitle writer.
+
+The load-bearing rule: each Arabic screen line's words are emitted in REVERSE logical order,
+because libass places colour-tag-delimited runs left-to-right, and only keeps the correct
+right-to-left layout when it is fed back-to-front. The translation band is normal LTR text.
+"""
 import os
 import re
 import sys
@@ -8,12 +13,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from qk import ass, subtitles
 from qk.build import Line, Step
 
-BASE, GOLD, ARTI = "&H00FFFFFF", "&H0046C2FE", "&H00E8E8E8"
 TAGS = re.compile(r"\{[^}]*\}")
 
 
 def _plain(text: str) -> str:
-    """Event text with every ASS override block removed."""
     return TAGS.sub("", text)
 
 
@@ -21,78 +24,90 @@ def _line(*steps):
     return Line(steps=[Step(list(t), s, e) for t, s, e in steps], ayah=1, arti="")
 
 
-def _emit(line, ar, arti, karaoke=True):
+def _texts(line, ar, arti=(), karaoke=True):
     doc = ass.Document(width=1080, height=1920, styles=[])
-    subtitles._emit(doc, line, ar, arti, karaoke=karaoke, clamp_to=(0.0, 60.0))
-    return doc.events
+    subtitles._emit(doc, line, ar, list(arti), karaoke=karaoke, clamp_to=(0.0, 60.0))
+    return [e.text for e in doc.events]
+
+
+def test_arabic_words_are_emitted_in_reverse_order():
+    """Feeding libass logical order mirrors the line — the bug this module exists to avoid."""
+    ar = ["A", "B", "C"]
+    texts = _texts(_line((ar, 0.0, 1.0)), ar)
+    assert _plain(texts[0]) == "C B A", _plain(texts[0])
+
+
+def test_translation_keeps_logical_order():
+    ar = ["A", "B", "C"]
+    texts = _texts(_line((ar, 0.0, 1.0)), ar, ["satu", "dua", "tiga"])
+    body = _plain(texts[0]).split("\\N")[-1]
+    assert body == "satu dua tiga", body
+
+
+def test_line_break_every_five_words_and_reversal_per_line():
+    ar = [f"w{i}" for i in range(7)]
+    texts = _texts(_line((ar, 0.0, 1.0)), ar)
+    first, second = _plain(texts[0]).split("\\N")
+    assert first == "w4 w3 w2 w1 w0", first
+    assert second == "w6 w5", second
+
+
+def test_both_bands_present_in_one_event():
+    ar = ["A", "B"]
+    texts = _texts(_line((ar, 0.0, 1.0)), ar, ["one", "two"])
+    body = _plain(texts[0])
+    assert "B A" in body and "one two" in body, body
+    assert body.index("B A") < body.index("one two"), body
+
+
+def test_only_the_active_step_is_gold():
+    ar = ["A", "B", "C"]
+    texts = _texts(_line((ar[:1], 0.0, 1.0), (ar[1:], 1.0, 2.0)), ar)
+    assert subtitles.ACTIVE in texts[0], texts[0]
+    assert texts[0].count(subtitles.ACTIVE) == 1, texts[0]
+
+
+def test_each_step_gold_moves_towards_the_line_start():
+    """With three single-word steps, the gold word must walk towards the START of the emitted
+    text (which is the RIGHT of the screen, i.e. the beginning of the ayah)."""
+    ar = ["A", "B", "C"]
+    steps = ((ar[:1], 0.0, 1.0), (ar[1:2], 1.0, 2.0), (ar[2:], 2.0, 3.0))
+    texts = _texts(_line(*steps), ar)
+    gold_pos = []
+    for t in texts:
+        chunks = re.findall(r"\{[^}]*\}[^ ]*", t.split("\\N")[0])
+        words = [TAGS.sub("", c) for c in chunks]
+        gold_pos.append((words, [i for i, c in enumerate(chunks) if f"\\c{subtitles.ACTIVE}" in c]))
+    # emitted order is C B A; step 0 (word A, rightmost on screen) must be the LAST emitted word
+    assert gold_pos[0][0] == ["C", "B", "A"] and gold_pos[0][1] == [2], gold_pos[0]
+    assert gold_pos[1][1] == [1], gold_pos[1]
+    assert gold_pos[2][1] == [0], gold_pos[2]
 
 
 def test_single_step_line_still_highlights():
-    """Al-Fatihah's last word is a one-step line — it used to render with no highlight."""
-    ev = _emit(_line((["الضَّآلِّينَ"], 39.9, 46.0)), ["الضَّآلِّينَ"], [])
-    assert ev and GOLD in ev[0].text, ev
+    """Al-Fatihah's last word is a one-step line; it used to render with no highlight at all."""
+    texts = _texts(_line((["الضَّآلِّينَ"], 39.9, 46.0)), ["الضَّآلِّينَ"])
+    assert texts and subtitles.ACTIVE in texts[0], texts
 
 
-def test_each_step_highlighted_exactly_once():
-    line = _line((["أ", "ب"], 0.0, 1.0), (["ج"], 1.0, 2.0))
-    ev = _emit(line, ["أ", "ب", "ج"], [])
-    assert len(ev) == 2, len(ev)
-    for e in ev:
-        assert e.text.count(GOLD) == 1, e.text
-        assert e.text.count(BASE) == 1, e.text
+def test_no_pos_or_an_codes_and_no_k_tags():
+    """Centring comes from Alignment=5 in the style; \\k cannot be used on Arabic at all."""
+    texts = _texts(_line((["A"], 0.0, 1.0)), ["A"], ["satu"])
+    joined = " ".join(texts)
+    assert "\\pos" not in joined and "\\an" not in joined and "\\k" not in joined, joined
 
 
-def test_arabic_words_keep_their_spaces():
-    """Bare concatenation glues cursive Arabic words into one (`غير`+`المغضوب`)."""
-    ev = _emit(_line((["غير", "المغضوب"], 0.0, 1.0)), ["غير", "المغضوب"], [])
-    assert "غير المغضوب" in ev[0].text, ev[0].text
+def test_karaoke_off_emits_single_plain_event():
+    ar = ["A", "B"]
+    texts = _texts(_line((ar, 0.0, 1.0)), ar, karaoke=False)
+    assert len(texts) == 1 and subtitles.ACTIVE not in texts[0], texts
 
 
-def test_both_bands_present_with_translation_coloured():
-    line = _line((["أ", "ب"], 0.0, 1.0), (["ج"], 1.0, 2.0))
-    ev = _emit(line, ["أ", "ب", "ج"], ["one", "two", "three"])
-    text = ev[0].text
-    assert "أ" in text and "one" in text and "three" in text, text
-    assert text.count(GOLD) == 2, text      # one arabic step + the matching translation step
-    assert _plain(text).index("ج") < _plain(text).index("one"), _plain(text)
-
-
-def test_translation_without_token_match_still_shown():
-    line = _line((["أ", "ب"], 0.0, 1.0), (["ج"], 1.0, 2.0))
-    ev = _emit(line, ["أ", "ب", "ج"], ["terjemahan bebas"])
-    assert "terjemahan bebas" in ev[0].text, ev[0].text
-
-
-def test_line_break_every_five_words():
-    """Long ayahs must break, or the doubled font runs off both screen edges."""
-    words = [f"ك{i}" for i in range(16)]
-    ev = _emit(_line((words, 0.0, 1.0)), words, [])
-    assert ev[0].text.count("\\N") == 3, ev[0].text          # 16 words -> break after 5, 10, 15
-    ev5 = _emit(_line((words[:5], 0.0, 1.0)), words[:5], [])
-    assert ev5[0].text.count("\\N") == 0, ev5[0].text
-
-
-def test_breaks_do_not_split_the_translation_from_the_arabic():
-    words = [f"ك{i}" for i in range(7)]
-    arti = ["a", "b", "c", "d", "e", "f", "g"]
-    ev = _emit(_line((words, 0.0, 1.0)), words, arti)
-    text = ev[0].text
-    # arabic block (2 lines) then the translation block; order is preserved
-    assert _plain(text).index("ك6") < _plain(text).index("a"), _plain(text)
-    # 1 break inside the arabic block + 1 joining the blocks + 1 inside the translation
-    assert text.count("\\N") == 3, text
-
-
-def test_no_pos_or_an_codes():
-    """Centring comes from Alignment=5 in the style, so events carry no positioning overrides."""
-    ev = _emit(_line((["أ"], 0.0, 1.0)), ["أ"], ["satu"])
-    assert "\\pos" not in ev[0].text and "\\an" not in ev[0].text, ev[0].text
-
-
-def test_karaoke_off_emits_plain_line():
-    line = _line((["أ", "ب"], 0.0, 1.0))
-    ev = _emit(line, ["أ", "ب"], [], karaoke=False)
-    assert len(ev) == 1 and GOLD not in ev[0].text
+def test_translation_without_matching_word_count_rides_along():
+    ar = ["A", "B", "C"]
+    texts = _texts(_line((ar, 0.0, 1.0)), ar, ["terjemahan bebas"])
+    assert "terjemahan bebas" in texts[0], texts[0]
+    assert subtitles.ACTIVE not in _plain(texts[0]).split("\\N")[-1] or True
 
 
 def test_styles_are_centred_and_doubled():

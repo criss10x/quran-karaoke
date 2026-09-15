@@ -71,6 +71,8 @@ def render(
     doc = subtitles.build_document(
         timeline, layout=layout, scale=scale, karaoke=karaoke,
         show_arti=show_arti, show_header=show_header,
+        # the highlight is measured by rendering with the very same fonts ffmpeg will use
+        fonts_dir=fonts_dir or _fonts_dir(),
     )
     subtitles.write_ass(doc, ass_path)
 
