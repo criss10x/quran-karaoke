@@ -46,7 +46,6 @@ def main(argv: list[str] | None = None) -> int:
                    help="qalign = timing per kata (butuh qari 03/05); proportional = bagi rata")
     p.add_argument("--fit", default="audio", choices=["audio", "video"],
                    help="audio = durasi video mengikuti murottal; video = sebaliknya")
-    p.add_argument("--no-karaoke", action="store_true", help="matikan highlight per kata")
     p.add_argument("--no-arti", action="store_true", help="sembunyikan terjemahan")
     p.add_argument("--gelap", type=float, default=0.62, metavar="F",
                    help="peredup video, 0-1 (1 = biarkan terang, default 0.62)")
@@ -92,7 +91,6 @@ def main(argv: list[str] | None = None) -> int:
         a.video, a.surah, af, at,
         qari=qari, layout=a.layout, out=a.out, align=a.align, scale=a.scale,
         workdir=a.workdir,
-        karaoke=not a.no_karaoke,
         show_arti=not a.no_arti,
         show_header=not a.no_header, fit=a.fit, crf=a.crf, preset=a.preset,
         brightness=a.gelap,
@@ -104,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  subtitle : {res.ass}")
     print(f"  audio    : {res.audio}")
     print(f"  surah    : {res.surah} · {res.qari} · {res.duration:.1f}s")
-    print(f"  baris    : {res.lines} baris, {res.steps} langkah karaoke")
+    print(f"  baris    : {res.lines} baris")
     print(f"  timing   : {mode}")
     return 0
 

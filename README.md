@@ -1,7 +1,7 @@
 # quran-karaoke
 
-Satu video masuk → satu video keluar: murottal + subtitle Al-Quran bergaya karaoke
-(highlight per kata, tulisan Arab + terjemahan Indonesia) dibakar ke dalam video.
+Satu video masuk → satu video keluar: murottal + subtitle Al-Quran
+(tulisan Arab bersambung RTL + terjemahan Indonesia) dibakar ke dalam video.
 
 ```bash
 python3 -m qk.cli video.mp4 --surah 112 --qari 05           # Al-Ikhlas, al-Afasy
@@ -16,7 +16,7 @@ python3 -m qk.cli --daftar-qari                              # daftar qari yang 
 | `--qari QQ` | `03` | lihat `--daftar-qari` |
 | `--layout` | `portrait` | `portrait` / `landscape` / `square` |
 | `--fit` | `audio` | `audio` = panjang ikut murottal (frame terakhir ditahan) |
-| `--no-karaoke` `--no-arti` `--no-header` | off | matikan lapisan teks |
+| `--no-arti` `--no-header` | off | matikan lapisan teks |
 | `--gelap F` | `0.62` | peredup video, 0-1 (1 = biarkan terang) |
 | `--crf` `--preset` `--scale` | `20` `medium` `1.0` | kualitas & ukuran |
 

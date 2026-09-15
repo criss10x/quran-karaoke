@@ -20,7 +20,6 @@ class RenderResult:
     qari: str
     surah: str
     lines: int
-    steps: int
 
 
 def render(
@@ -35,7 +34,6 @@ def render(
     workdir: str | None = None,
     align: str = "auto",
     scale: float = 1.0,
-    karaoke: bool = True,
     show_arti: bool = True,
     show_header: bool = True,
     fit: str = "audio",
@@ -69,10 +67,8 @@ def render(
     )
     ass_path = os.path.join(workdir, f"{_slug(timeline.surah_name)}-{timeline.qari}.ass")
     doc = subtitles.build_document(
-        timeline, layout=layout, scale=scale, karaoke=karaoke,
+        timeline, layout=layout, scale=scale,
         show_arti=show_arti, show_header=show_header,
-        # the highlight is measured by rendering with the very same fonts ffmpeg will use
-        fonts_dir=fonts_dir or _fonts_dir(),
     )
     subtitles.write_ass(doc, ass_path)
 
@@ -89,7 +85,7 @@ def render(
     return RenderResult(
         video=out, ass=ass_path, audio=timeline.audio, duration=timeline.duration,
         align=timeline.align, qari=timeline.qari_name, surah=timeline.surah_name,
-        lines=len(timeline.lines), steps=len(timeline.steps),
+        lines=len(timeline.lines),
     )
 
 

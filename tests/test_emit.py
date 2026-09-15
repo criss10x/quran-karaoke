@@ -1,8 +1,9 @@
 """Self-check for the subtitle writer.
 
-The load-bearing rule: each Arabic screen line's words are emitted in REVERSE logical order,
-because libass places colour-tag-delimited runs left-to-right, and only keeps the correct
-right-to-left layout when it is fed back-to-front. The translation band is normal LTR text.
+The load-bearing rule: the Arabic band carries NO override tags, because libass splits text
+into runs at every tag that changes something and lays those runs out left-to-right. A tag per
+word (the old karaoke highlight) therefore mirrored the line and broke the cursive joins.
+Untagged, the line is one run and libass + HarfBuzz render it right-to-left and connected.
 """
 import os
 import re
@@ -24,90 +25,59 @@ def _line(*steps):
     return Line(steps=[Step(list(t), s, e) for t, s, e in steps], ayah=1, arti="")
 
 
-def _texts(line, ar, arti=(), karaoke=True):
+def _texts(line, ar, arti=()):
     doc = ass.Document(width=1080, height=1920, styles=[])
-    subtitles._emit(doc, line, ar, list(arti), karaoke=karaoke, clamp_to=(0.0, 60.0))
+    subtitles._emit(doc, line, ar, list(arti), clamp_to=(0.0, 60.0))
     return [e.text for e in doc.events]
 
 
-def test_arabic_words_are_emitted_in_reverse_order():
-    """Feeding libass logical order mirrors the line — the bug this module exists to avoid."""
+def test_one_event_per_line():
     ar = ["A", "B", "C"]
-    texts = _texts(_line((ar, 0.0, 1.0)), ar)
-    assert _plain(texts[0]) == "C B A", _plain(texts[0])
+    assert len(_texts(_line((ar, 0.0, 1.0)), ar)) == 1
 
 
-def test_translation_keeps_logical_order():
+def test_arabic_keeps_logical_order():
+    """Untagged text is a single run, so libass reorders it itself — do NOT reverse it here."""
+    ar = ["A", "B", "C"]
+    assert _plain(_texts(_line((ar, 0.0, 1.0)), ar)[0]) == "A B C"
+
+
+def test_arabic_band_has_no_override_tags():
+    """Any tag that changes something would split the run and break the joins and the order."""
+    ar = ["A", "B", "C"]
+    first = _texts(_line((ar, 0.0, 1.0)), ar)[0].split("\\N")[0]
+    assert "{" not in first and "}" not in first, first
+
+
+def test_translation_stays_left_to_right():
     ar = ["A", "B", "C"]
     texts = _texts(_line((ar, 0.0, 1.0)), ar, ["satu", "dua", "tiga"])
-    body = _plain(texts[0]).split("\\N")[-1]
-    assert body == "satu dua tiga", body
+    assert _plain(texts[0]).split("\\N")[-1] == "satu dua tiga"
 
 
-def test_line_break_every_five_words_and_reversal_per_line():
+def test_line_break_every_five_words():
     ar = [f"w{i}" for i in range(7)]
-    texts = _texts(_line((ar, 0.0, 1.0)), ar)
-    first, second = _plain(texts[0]).split("\\N")
-    assert first == "w4 w3 w2 w1 w0", first
-    assert second == "w6 w5", second
+    first, second = _plain(_texts(_line((ar, 0.0, 1.0)), ar)[0]).split("\\N")
+    assert first == "w0 w1 w2 w3 w4" and second == "w5 w6"
 
 
-def test_both_bands_present_in_one_event():
+def test_both_bands_in_one_event():
     ar = ["A", "B"]
-    texts = _texts(_line((ar, 0.0, 1.0)), ar, ["one", "two"])
-    body = _plain(texts[0])
-    assert "B A" in body and "one two" in body, body
-    assert body.index("B A") < body.index("one two"), body
+    body = _plain(_texts(_line((ar, 0.0, 1.0)), ar, ["one", "two"])[0])
+    assert body.index("A B") < body.index("one two"), body
 
 
-def test_only_the_active_step_is_gold():
-    ar = ["A", "B", "C"]
-    texts = _texts(_line((ar[:1], 0.0, 1.0), (ar[1:], 1.0, 2.0)), ar)
-    assert subtitles.ACTIVE in texts[0], texts[0]
-    assert texts[0].count(subtitles.ACTIVE) == 1, texts[0]
+def test_no_pos_an_k_or_colour_codes():
+    """Centring comes from Alignment=5 in the style; \\k is unusable on Arabic anyway."""
+    joined = " ".join(_texts(_line((["A"], 0.0, 1.0)), ["A"], ["satu"]))
+    for code in ("\\pos", "\\an", "\\k", "\\c"):
+        assert code not in joined, (code, joined)
 
 
-def test_each_step_gold_moves_towards_the_line_start():
-    """With three single-word steps, the gold word must walk towards the START of the emitted
-    text (which is the RIGHT of the screen, i.e. the beginning of the ayah)."""
-    ar = ["A", "B", "C"]
-    steps = ((ar[:1], 0.0, 1.0), (ar[1:2], 1.0, 2.0), (ar[2:], 2.0, 3.0))
-    texts = _texts(_line(*steps), ar)
-    gold_pos = []
-    for t in texts:
-        chunks = re.findall(r"\{[^}]*\}[^ ]*", t.split("\\N")[0])
-        words = [TAGS.sub("", c) for c in chunks]
-        gold_pos.append((words, [i for i, c in enumerate(chunks) if f"\\c{subtitles.ACTIVE}" in c]))
-    # emitted order is C B A; step 0 (word A, rightmost on screen) must be the LAST emitted word
-    assert gold_pos[0][0] == ["C", "B", "A"] and gold_pos[0][1] == [2], gold_pos[0]
-    assert gold_pos[1][1] == [1], gold_pos[1]
-    assert gold_pos[2][1] == [0], gold_pos[2]
-
-
-def test_single_step_line_still_highlights():
-    """Al-Fatihah's last word is a one-step line; it used to render with no highlight at all."""
-    texts = _texts(_line((["الضَّآلِّينَ"], 39.9, 46.0)), ["الضَّآلِّينَ"])
-    assert texts and subtitles.ACTIVE in texts[0], texts
-
-
-def test_no_pos_or_an_codes_and_no_k_tags():
-    """Centring comes from Alignment=5 in the style; \\k cannot be used on Arabic at all."""
-    texts = _texts(_line((["A"], 0.0, 1.0)), ["A"], ["satu"])
-    joined = " ".join(texts)
-    assert "\\pos" not in joined and "\\an" not in joined and "\\k" not in joined, joined
-
-
-def test_karaoke_off_emits_single_plain_event():
-    ar = ["A", "B"]
-    texts = _texts(_line((ar, 0.0, 1.0)), ar, karaoke=False)
-    assert len(texts) == 1 and subtitles.ACTIVE not in texts[0], texts
-
-
-def test_translation_without_matching_word_count_rides_along():
-    ar = ["A", "B", "C"]
-    texts = _texts(_line((ar, 0.0, 1.0)), ar, ["terjemahan bebas"])
-    assert "terjemahan bebas" in texts[0], texts[0]
-    assert subtitles.ACTIVE not in _plain(texts[0]).split("\\N")[-1] or True
+def test_no_arti_drops_the_second_band():
+    ar = ["A"]
+    body = _plain(_texts(_line((ar, 0.0, 1.0)), ar)[0])
+    assert body == "A", body
 
 
 def test_styles_are_centred_and_doubled():

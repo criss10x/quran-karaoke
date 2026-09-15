@@ -112,16 +112,3 @@ class Document:
             for e in sorted(self.events, key=lambda x: (x.start, x.layer))
         ]
         return "\n".join(head + body) + "\n"
-
-
-def pos(x: int, y: int, align: int) -> str:
-    return f"\\an{align}\\pos({x},{y})"
-
-
-def karaoke_line(tokens: list[str], active: int | None, highlight: str, base: str = "&H00FFFFFF") -> str:
-    """Colour-override each token, drawing `active` in `highlight`."""
-    parts = []
-    for i, t in enumerate(tokens):
-        colour = highlight if i == active else base
-        parts.append(f"{{\\c{colour}}}{esc(t)}")
-    return "".join(parts)
