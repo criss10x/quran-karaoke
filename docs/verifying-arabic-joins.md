@@ -44,6 +44,31 @@ and it exits 1 for the latter. Because its mechanism shares nothing with
 `verify_arabic_joins.py`, agreement between the two is real corroboration rather than the same
 artefact measured twice. Run both.
 
+## Both gates on a long ayah (Al-Baqarah 2:286, 10 lines, 53 s)
+
+The longest ayah in the Quran, so this is the case where a layout or wrapping bug has the most
+room to appear. 7 timestamps, all of them clean:
+
+```
+gate 1  exit=0   delivered matches the good style on every timestamp
+        broken burn -> verdict 'B' at 6/6 timestamps, exit 1
+gate 2  exit=0   7/7 in range: 7, 5, 10, 7, 7, 9, 7 blocks vs expected 5..7 / 5..7 /
+                 5..12 / 5..9 / 5..7 / 4..10 / 4..10
+        broken burn -> 7/7 out of range, exit 1
+```
+
+Pre-flight checks worth running before a long render, all cheap:
+
+```bash
+python3 scripts/check_safe_area.py <file.ass> --fonts fonts \
+    --timestamps 1,8,16,24,32,40,48 --duration 60   # no band crosses x59..x1021
+python3 scripts/check_rtl.py <file.ass> --fonts fonts          # RTL direction
+python3 scripts/verify_ass_layers.py <file.ass>                # each layer draws its own text
+```
+
+On 2:286 the widest band was 917 px against a 962 px safe width — worth checking rather than
+assuming, since a long ayah is exactly where `WrapStyle` and font-size mistakes surface.
+
 Precondition: a 240 luma threshold has to isolate the subtitle. Verify it on your source — on
 these renders the background peaks at luma 200 above the bands (dimmed by `--gelap 0.62`). Pass
 `--band y0 y1` if auto-detection grabs the wrong region.
