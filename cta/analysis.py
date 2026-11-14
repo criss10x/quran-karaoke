@@ -112,21 +112,28 @@ def analyze_candles(candles: Sequence[Candle], cfg: Config = Config()) -> dict:
         "components": components,
         "score": score,
         "bias": bias_label(score, MAX_SCORE),
-        "signals": _formula_signals(cross_state, st_dir),
+        "signals": _formula_signals(candles, cfg),
     }
 
 
-# Rules that survived the out-of-sample backtest on 4h (see docs/backtest.md).
+# Rules that survived the out-of-sample backtest on BTC 4h (see docs/formula.md). They are
+# evaluated with the backtest engine's own Features so live signals match what was tested.
 FORMULAS = {
     "A": "EMA fast > EMA slow (golden cross) -> LONG, else FLAT",
-    "B": "EMA fast > EMA slow AND Supertrend up -> LONG, else FLAT",
+    "B": "score >= +4, i.e. all components bullish (close > both EMAs, golden cross, "
+         "Supertrend up, structure bullish) -> LONG, else FLAT",
 }
 FORMULA_TF = "4h"
 
 
-def _formula_signals(cross_state, st_dir) -> dict:
-    a = [None if x is None else bool(x) for x in cross_state]
-    b = [None if x is None or d is None else (bool(x) and d == 1) for x, d in zip(cross_state, st_dir)]
+def _formula_signals(candles: Sequence[Candle], cfg: "Config") -> dict:
+    from .backtest import Features  # local import: backtest imports nothing from here
+
+    F = Features(candles)
+    ef, es = F.ema(cfg.ema_fast), F.ema(cfg.ema_slow)
+    score = F.score(cfg.ema_fast, cfg.ema_slow, cfg.st_period, cfg.st_mult, cfg.swing_left)
+    a = [None if f is None or s_ is None else f > s_ for f, s_ in zip(ef, es)]
+    b = [None if s_ is None else sc >= 4 for sc, s_ in zip(score, es)]
     out = {}
     for key, series in (("A", a), ("B", b)):
         cur = series[-1] if series else None

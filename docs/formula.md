@@ -1,83 +1,91 @@
-# Formula hasil backtest
+# Formula hasil backtest — BTC
 
-Ringkasan dari `docs/backtest.md` (laporan lengkap, dibuat ulang dengan `python3 -m cta.research`).
-Data Binance spot 2018-01 → 2026-11, 6 koin (BTC, ETH, BNB, SOL, XRP, ADA), 3 timeframe
-(1h, 4h, 1d), 200 kombinasi formula, total 3.600 backtest. Biaya 0,15% per sisi, long/flat
-(spot, tanpa leverage dan tanpa short), sinyal dihitung saat candle close lalu dieksekusi di
-open candle berikutnya.
+Ringkasan dari `docs/backtest.md` (laporan lengkap, dibuat ulang dengan
+`python3 -m cta.research --symbols BTC --tf 1h 4h 1d`).
+
+Data Binance spot **BTCUSDT** 2018-01 → 2026-11, timeframe 1h, 4h, 1d, 200 kombinasi formula
+(600 backtest). Biaya 0,15% per sisi (fee + slippage), long/flat (spot, tanpa leverage dan tanpa
+short). Sinyal dihitung saat candle close lalu dieksekusi di open candle berikutnya.
 
 ## Cara memilih (anti-overfitting)
 
-1. **Train 2019–2023** dipakai untuk meranking formula, **test 2024 → Nov 2026** tidak pernah
+1. **Train 2019–2023** dipakai untuk meranking formula. **Test 2024 → Nov 2026** tidak pernah
    dipakai untuk memilih.
-2. Ranking memakai **median antar 6 koin**: formula harus jalan di mayoritas koin.
-3. Dilihat juga per **keluarga formula** (median semua kombinasi parameter). Kalau hanya satu
-   kombinasi parameter yang bagus, itu kebetulan, bukan edge.
-4. Walk-forward: tiap tahun pilih formula terbaik dari 3 tahun sebelumnya, lalu jalankan di tahun itu.
+2. Karena hanya satu koin, risiko "kebetulan bagus" lebih besar. Pengamannya:
+   - dilihat per **keluarga formula** (median semua kombinasi parameter): logika yang benar
+     harus bagus di hampir semua variasi parameter, bukan di satu titik saja;
+   - **parameter default** (EMA 50/200, Supertrend 10/3, swing 5) diutamakan, bukan hasil tuning;
+   - **walk-forward**: tiap tahun pilih formula terbaik dari 3 tahun sebelumnya, lalu jalankan di tahun itu.
 
-## Hasil utama
+## Hasil per timeframe
 
-**1h: jangan dipakai untuk formula ini.** Semua keluarga formula kalah dari buy & hold di periode
-test setelah biaya (median Sharpe test negatif untuk hampir semua keluarga). Terlalu banyak whipsaw.
+**1h: jangan dipakai.** Tidak ada satu pun dari 200 kombinasi yang mengalahkan buy & hold di
+periode test (0%). Walk-forward 2022–2026: −68% vs buy & hold +44%.
 
-**1d: tidak ada edge yang jelas.** Median Sharpe test per keluarga formula 0,19–0,46, buy & hold 0,43. Manfaatnya hanya
-drawdown lebih kecil (±48% vs 70%).
+**1d: tidak meyakinkan.** Beberapa keluarga sedikit di atas buy & hold di test (Sharpe
+0,62–0,66 vs 0,59), tapi formula EMA 50/200 di 1d hanya trading ±0,8 kali/tahun dan kalah di
+periode penuh (Sharpe 0,76 vs 0,92). Walk-forward bagus (+119% vs +48%), tapi formula yang
+terpilih berganti-ganti tiap tahun, jadi tidak ada satu aturan yang stabil.
 
-**4h: timeframe terbaik.** Formula yang menang di train ternyata bertahan di test:
+**4h: paling bagus dan konsisten.**
 
-| Formula 4h (median 6 koin, 2019 → Nov 2026) | Sharpe | CAGR | Max DD | Waktu di market | Trade/thn | Win rate | Profit factor |
-|---|---|---|---|---|---|---|---|
-| Buy & hold | 0,87 | +42% | 83% | 100% | – | – | – |
-| **A · EMA 50 > EMA 200** | **1,15** | **+63%** | 69% | 51% | 5,5 | 34% | 5,8 |
-| **B · EMA 50 > EMA 200 + Supertrend(10,3) up** | 1,04 | +43% | **60%** | 31% | 14,7 | 40% | 2,2 |
-| C · Semua 5 komponen bullish (skor +5) | 0,91 | +40% | 62% | 26% | 22,4 | 30% | 2,0 |
+| BTC 4h, 2019 → Nov 2026 | Sharpe | CAGR | Total | Max DD | Di market | Trade/thn | Win rate | Profit factor | **Sharpe test** | **DD test** |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Buy & hold | 0,92 | +44% | +1.701% | 77% | 100% | – | – | – | 0,58 | 53% |
+| **A · EMA 50 > EMA 200** | **1,34** | **+61%** | **+4.162%** | 59% | 54% | 5,1 | 42% | 5,7 | **0,91** | 31% |
+| **B · Semua komponen bullish** | 1,32 | +43% | +1.569% | 40% | 28% | 22,9 | 34% | 2,4 | 0,81 | **18%** |
+| EMA 50/200 + Supertrend(10,3) | 1,31 | +46% | +1.891% | 34% | 33% | 15,1 | 44% | 2,6 | 0,74 | 26% |
+| Market structure saja (swing 5) | 1,09 | +45% | +1.764% | 72% | 55% | 24,5 | 38% | 1,9 | 0,80 | 40% |
 
-Hanya periode test (2024 → Nov 2026), median Sharpe: buy & hold 0,42 · **A 0,74** · B 0,60 · C 0,65.
-Formula A mengalahkan buy & hold di test pada 5 dari 6 koin (kecuali SOL).
+Return per tahun (BTC 4h):
 
-Median return per tahun (4h):
+| Tahun | Buy & hold | A · EMA 50/200 | B · Semua bullish |
+|---|---|---|---|
+| 2019 | +94% | +134% | +141% |
+| 2020 | +302% | +279% | +120% |
+| 2021 | +60% | +126% | +48% |
+| 2022 (bear) | −64% | −52% | −21% |
+| 2023 | +156% | +125% | +73% |
+| 2024 | +121% | +80% | +51% |
+| 2025 | −6% | +8% | +9% |
+| 2026 (s/d Nov) | −24% | +1% | −6% |
 
-| Tahun | Buy & hold | A | B | C |
-|---|---|---|---|---|
-| 2019 | −2% | +39% | +80% | +58% |
-| 2020 | +237% | +198% | +116% | +106% |
-| 2021 | +510% | +556% | +288% | +173% |
-| 2022 (bear) | −66% | −50% | −28% | −27% |
-| 2023 | +116% | +75% | −8% | −8% |
-| 2024 | +104% | +76% | +43% | +31% |
-| 2025 | −11% | +14% | +14% | +9% |
-| 2026 (s/d Nov) | −38% | −3% | −8% | −8% |
+Ketahanan:
 
-Sensitivitas biaya (Sharpe test): pada 0,10% per sisi A 0,75 / B 0,65 / C 0,73; pada 0,25% per sisi
-A 0,71 / B 0,47 / C 0,45. Formula A paling tahan biaya karena jarang trading.
+- **Parameter:** ketiga varian EMA cross (20/50, 50/100, 50/200) mengalahkan buy & hold di
+  test (Sharpe 0,65 / 0,76 / 0,91), dan 50/200 yang terbaik. Formula B mengalahkan buy & hold di
+  test pada **12 dari 12** variasi Supertrend (Sharpe test 0,62–1,02, DD test 17–28%).
+- **Biaya:** pada 0,25% per sisi, Sharpe test A masih 0,87. B turun ke 0,59 (≈ buy & hold),
+  karena trading ±23 kali/tahun. Pada 0,10% per sisi: A 0,93, B 0,92.
+- **Walk-forward 4h** 2022–2026: +59% vs buy & hold +44%.
 
-## Formula yang direkomendasikan
+## Formula yang direkomendasikan untuk BTC
 
-**Formula A (utama), timeframe 4h, parameter default (tidak di-tuning):**
+**Formula A (utama): BTC 4h, EMA 50/200 cross**
 
-- **Masuk / hold** saat candle 4h close dengan **EMA 50 di atas EMA 200** (golden cross).
-- **Keluar** saat candle 4h close dengan **EMA 50 di bawah EMA 200** (death cross).
-- Watak trend-following: win rate rendah (±34%) tapi profit factor tinggi. Profitnya datang dari
-  sedikit tren besar, jadi **jangan skip sinyal** setelah beberapa kali rugi kecil.
+- **Beli / tahan** saat candle 4h close dengan **EMA 50 di atas EMA 200**.
+- **Jual / keluar** saat candle 4h close dengan **EMA 50 di bawah EMA 200**.
+- Rata-rata 5 trade per tahun. Win rate 42%, tapi rata-rata untung jauh lebih besar dari rugi
+  (profit factor 5,7). Profit datang dari sedikit tren besar, jadi **jangan skip sinyal**
+  setelah beberapa kali rugi kecil.
+- Kelemahan: tertinggal di awal bull market (2020, 2023, 2024) karena cross datang terlambat.
 
-**Formula B (konservatif):** syarat A **plus Supertrend(10,3) 4h arah up**. Keluar lebih cepat
-saat Supertrend flip down. Return lebih kecil, drawdown lebih kecil (BTC 34% vs 59%), tapi
-trading ±3× lebih sering sehingga lebih sensitif terhadap biaya.
+**Formula B (konservatif): BTC 4h, semua komponen bullish**
 
-Market structure (BOS/CHoCH) dan skor konfluensi tetap berguna sebagai **konteks dan level**
-(support/resistance, invalidasi), tapi sebagai aturan entry/exit mekanis tidak lebih baik dari A.
+- **Beli / tahan** hanya saat **semua** syarat ini terpenuhi di candle 4h: close > EMA 50,
+  close > EMA 200, EMA 50 > EMA 200, Supertrend(10,3) arah up, dan BOS/CHoCH terakhir bullish
+  (skor analisa = +5).
+- **Keluar** begitu salah satu syarat gugur.
+- Drawdown paling kecil (2022 hanya −21%, DD test 18%), tapi hanya 28% waktu di market sehingga
+  tertinggal jauh di tahun bull. Butuh biaya trading rendah (pakai limit order / diskon fee).
 
-Status kedua formula untuk tiap koin tampil otomatis di `python3 -m cta ...` (baris
-*Formula teruji backtest (4h)*, perlu `4h` di daftar `--tf`).
+Status kedua formula tampil otomatis di `python3 -m cta BTC ...` pada baris
+*Formula teruji backtest (4h)* (pastikan `4h` ada di `--tf`).
 
 ## Batasan, baca sebelum dipakai
 
-- **Survivorship bias:** keenam koin dipilih karena masih besar hari ini. Koin yang mati tidak
-  diuji, jadi hasil untuk altcoin acak kemungkinan lebih buruk.
-- Drawdown tetap besar (median 60–69%). Ini mengurangi kerugian dibanding buy & hold, bukan
-  menghilangkannya. Pakai ukuran posisi yang wajar.
-- Walk-forward (memilih ulang formula tiap tahun) hasilnya campuran: unggul di tahun bear,
-  tertinggal di tahun bull kuat. Konsisten memakai satu formula sederhana lebih baik daripada
-  terus ganti-ganti formula terbaik.
-- Tanpa short, tanpa leverage, tanpa funding. Hasil masa lalu tidak menjamin hasil masa depan.
-  Bukan nasihat keuangan.
+- Hanya **satu aset** dan satu periode sejarah. Hasil masa lalu tidak menjamin hasil masa depan.
+- Drawdown tetap besar untuk formula A (59%). Formula ini mengurangi kerugian dibanding
+  buy & hold, bukan menghilangkannya. Pakai ukuran posisi yang wajar.
+- Tanpa short, tanpa leverage, tanpa funding, tanpa pajak. Slippage diasumsikan 0,05%.
+- Bukan nasihat keuangan.

@@ -150,8 +150,12 @@ def render(rows, symbols, tfs, cost, top=12):
     L.append(f"- **Train** (untuk memilih formula): {EVAL_START} s/d {TRAIN_END} (eksklusif).")
     L.append(f"- **Test / out-of-sample** (tidak pernah dipakai memilih): {TRAIN_END} s/d data terakhir.")
     L.append("- Sinyal dihitung saat candle close, eksekusi di open candle berikutnya.")
-    L.append("- Ranking = **median** Sharpe antar koin di periode train (formula harus bagus di "
-             "mayoritas koin, bukan satu koin saja). Angka di tabel adalah median antar koin.")
+    if len(symbols) > 1:
+        L.append("- Ranking = **median** Sharpe antar koin di periode train (formula harus bagus di "
+                 "mayoritas koin, bukan satu koin saja). Angka di tabel adalah median antar koin.")
+    else:
+        L.append("- Ranking = Sharpe di periode train. Dengan satu koin risiko kebetulan lebih besar, "
+                 "jadi perhatikan tabel per keluarga formula dan walk-forward, bukan hanya peringkat #1.")
     L.append("")
     for tf in tfs:
         tr, te = summarize(rows, tf, "train"), summarize(rows, tf, "test")
@@ -164,9 +168,10 @@ def render(rows, symbols, tfs, cost, top=12):
                  f"MaxDD {pct(bh_tr['max_dd'])} · test: Sharpe {num(bh_te['sharpe'])}, CAGR "
                  f"{pct(bh_te['cagr'])}, MaxDD {pct(bh_te['max_dd'])}")
         L.append("")
-        L.append("**Per keluarga formula** (median semua kombinasi parameter × semua koin; "
+        L.append("**Per keluarga formula** (median semua kombinasi parameter"
+                 + (" × semua koin" if len(symbols) > 1 else "") + "; "
                  "*% kombinasi > B&H* = porsi kombinasi parameter yang Sharpe test-nya mengalahkan "
-                 "buy & hold di koin yang sama):")
+                 "buy & hold" + (" di koin yang sama" if len(symbols) > 1 else "") + "):")
         L.append("")
         L.append("| Keluarga | Kombinasi | Train Sharpe | Test Sharpe | Test CAGR | Test MaxDD | % kombinasi > B&H (test) |")
         L.append("|---|---|---|---|---|---|---|")
@@ -221,14 +226,16 @@ def render(rows, symbols, tfs, cost, top=12):
         L.append(f"**Walk-forward {tf}** (tiap tahun pilih formula terbaik dari 3 tahun sebelumnya, "
                  f"lalu dipakai tahun itu):")
         L.append("")
-        L.append("| Tahun | Formula terpilih | Median return | Median buy & hold |")
+        med_lbl = "Median return | Median buy & hold" if len(symbols) > 1 else "Return | Buy & hold"
+        L.append(f"| Tahun | Formula terpilih | {med_lbl} |")
         L.append("|---|---|---|---|")
         for s in wf["steps"]:
             L.append(f"| {s['year']} | `{s['rule']}` | {pct(s['median_ret'])} | {pct(s['median_bh'])} |")
         tot = ", ".join(f"{s.replace('USDT', '')} {pct(v)} (B&H {pct(wf['total_bh'][s])})"
                         for s, v in wf["total"].items())
         L.append("")
-        L.append(f"Total walk-forward per koin: {tot}")
+        L.append(f"Total walk-forward {wf['steps'][0]['year']}–{wf['steps'][-1]['year']}"
+                 f"{' per koin' if len(symbols) > 1 else ''}: {tot}")
         L.append("")
     return "\n".join(L)
 

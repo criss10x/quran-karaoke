@@ -45,11 +45,12 @@ Data: Binance public spot klines via `data-api.binance.vision` (fallback `api.bi
    - Disagreement between `structure.bias` and `swing_trend` = transition; say it is unconfirmed.
 
    - `timeframes["4h"].signals.A` / `.B` — status (`LONG`/`FLAT`, `since_bars`) of the two
-     rules that survived the out-of-sample backtest (`docs/formula.md`): A = EMA 50 > EMA 200 on
-     4h (main), B = A + Supertrend(10,3) up (conservative). Always include `4h` in `--tf` so these
-     are computed, and quote their backtest stats from `docs/formula.md` when relevant.
-     Do not present 1h signals as a tested trading rule: on 1h every rule lost to buy & hold
-     after costs.
+     rules that survived the out-of-sample backtest on **BTC 4h** (`docs/formula.md`):
+     A = EMA 50 > EMA 200 (main), B = all components bullish, score +5 (conservative, lowest
+     drawdown). Always include `4h` in `--tf` so these are computed, and quote their backtest
+     stats from `docs/formula.md` when relevant. For coins other than BTC, say the formulas
+     were tested on BTC only. Do not present 1h signals as a tested trading rule: on BTC 1h
+     none of the 200 rules beat buy & hold after costs.
 
 4. **Answer** in the user's language with:
    - one-line verdict (bias + confluence %) and last price;

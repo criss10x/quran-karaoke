@@ -63,8 +63,7 @@ def render_symbol(res: dict) -> str:
             ago = "" if v["since_bars"] is None else f" sejak {v['since_bars']} bar"
             return f"**{v['state']}**{ago}"
         lines.append(f"**Formula teruji backtest (4h):** A · EMA{ef}/{es} cross → {sig('A')} · "
-                     f"B · EMA{ef}/{es} + Supertrend → {sig('B')} "
-                     f"<sub>(lihat docs/backtest.md)</sub>")
+                     f"B · semua komponen bullish → {sig('B')} <sub>(lihat docs/formula.md)</sub>")
         lines.append("")
 
     head = (f"| TF | Close | EMA{ef} | EMA{es} | Cross | Supertrend | Struktur (bias / swing) "

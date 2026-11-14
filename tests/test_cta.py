@@ -126,6 +126,16 @@ def test_formula_signals():
     assert short["signals"]["A"]["state"] == "n/a"   # EMA 200 not warmed up
 
 
+def test_live_score_matches_backtest_features():
+    closes = [100 + 10 * math.sin(i / 15) + i * 0.05 for i in range(600)]
+    c = candles_from_closes(closes)
+    cfg = Config()
+    F = Features(c)
+    sc = F.score(cfg.ema_fast, cfg.ema_slow, cfg.st_period, cfg.st_mult, cfg.swing_left)
+    for n in (300, 450, 600):
+        assert analyze_candles(c[:n], cfg)["score"] == sc[n - 1]
+
+
 def test_warmup_without_ema_slow():
     r = analyze_candles(candles_from_closes([100 + i for i in range(120)]), Config())
     assert r["ema"]["slow"] is None and r["ema"]["cross"] == "n/a"
