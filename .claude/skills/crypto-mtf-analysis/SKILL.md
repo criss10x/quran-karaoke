@@ -44,12 +44,28 @@ Data: Binance public spot klines via `data-api.binance.vision` (fallback `api.bi
    - A CHoCH on a lower TF against the higher-TF bias = early reversal / end of pullback signal.
    - Disagreement between `structure.bias` and `swing_trend` = transition; say it is unconfirmed.
 
+   - `timeframes["4h"].signals.A` / `.B` — status (`LONG`/`FLAT`, `since_bars`) of the two
+     rules that survived the out-of-sample backtest (`docs/formula.md`): A = EMA 50 > EMA 200 on
+     4h (main), B = A + Supertrend(10,3) up (conservative). Always include `4h` in `--tf` so these
+     are computed, and quote their backtest stats from `docs/formula.md` when relevant.
+     Do not present 1h signals as a tested trading rule: on 1h every rule lost to buy & hold
+     after costs.
+
 4. **Answer** in the user's language with:
    - one-line verdict (bias + confluence %) and last price;
+   - the formula A / B status on 4h (LONG/FLAT and for how many bars);
    - a compact table per symbol: TF | trend EMA | Supertrend | structure | key level;
    - key levels to watch (nearest support/resistance, Supertrend line, EMA 50/200 on the HTF);
    - scenarios: what confirms continuation, what invalidates it (e.g. "close 4h di atas X = CHoCH bullish");
    - closing disclaimer: not financial advice; indicators lag; use stop losses.
+
+## Backtesting
+
+If the user asks to backtest or re-tune: `python3 -m cta.research --symbols ... --tf ...
+--out docs/backtest.md --json data/backtest.json`. Selection is done on the train window
+(2019–2023) only and ranked by the median across symbols. Judge rules on the **test** window and
+the per-family table, never on the train ranking alone. The first download takes ~3 min per
+symbol for 1h; candles are cached in `data/`.
 
 ## Notes
 

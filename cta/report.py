@@ -56,6 +56,16 @@ def render_symbol(res: dict) -> str:
     lines.append("")
     lines.append(f"> {conf['summary']}")
     lines.append("")
+    sig_tf = res["timeframes"].get("4h", {})
+    if "signals" in sig_tf:
+        def sig(k):
+            v = sig_tf["signals"][k]
+            ago = "" if v["since_bars"] is None else f" sejak {v['since_bars']} bar"
+            return f"**{v['state']}**{ago}"
+        lines.append(f"**Formula teruji backtest (4h):** A · EMA{ef}/{es} cross → {sig('A')} · "
+                     f"B · EMA{ef}/{es} + Supertrend → {sig('B')} "
+                     f"<sub>(lihat docs/backtest.md)</sub>")
+        lines.append("")
 
     head = (f"| TF | Close | EMA{ef} | EMA{es} | Cross | Supertrend | Struktur (bias / swing) "
             f"| BOS/CHoCH terakhir | Support | Resistance | Skor | Bias |")

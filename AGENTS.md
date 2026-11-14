@@ -3,6 +3,9 @@
 Multi-timeframe crypto TA from Binance spot candles: EMA 50/200, Supertrend, market structure.
 Pipeline: `cta/data.py` (klines) → `cta/indicators.py` + `cta/structure.py` → `cta/analysis.py`
 (per-TF score, confluence) → `cta/report.py` (Markdown) ← `cta/cli.py`.
+Backtest: `cta/backtest.py` (rules, simulation, metrics) ← `cta/research.py` (grid, train/test,
+walk-forward, `docs/backtest.md`). Conclusions live in `docs/formula.md`, which is hand-written.
+Update it only after re-running the research.
 
 ## Invariants
 
@@ -13,6 +16,9 @@ Pipeline: `cta/data.py` (klines) → `cta/indicators.py` + `cta/structure.py` �
 - **Closed candles by default.** `fetch_klines` drops the forming candle unless `include_open`.
 - **Indicator definitions match TradingView** (`ta.ema`, `ta.rma`, `ta.supertrend`), SMA-seeded.
   Supertrend direction here is `+1 = up` (Pine's sign is inverted).
+- **Backtest execution:** signal at bar close, fill at the next bar's open, costs on every change.
+  Choose rules on the train window only; `tests/test_cta.py::test_simulate_*` guard the fill model.
+- `data/` (candle cache, research JSON) is gitignored and regenerated.
 - Report text is Indonesian; code, JSON keys and comments are English.
 
 ## Checks
@@ -20,6 +26,7 @@ Pipeline: `cta/data.py` (klines) → `cta/indicators.py` + `cta/structure.py` �
 ```bash
 python3 tests/test_cta.py                 # offline unit tests
 python3 -m cta BTC --tf 1h 4h 1d          # live smoke test (needs data-api.binance.vision)
+python3 -m cta.research --symbols BTC --tf 1d   # quick backtest smoke test (~10 s once cached)
 ```
 
 Network: the cloud environment must allow `data-api.binance.vision`; `api.binance.com` returns

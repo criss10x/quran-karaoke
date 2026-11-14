@@ -11,6 +11,7 @@ from cta.analysis import Config, analyze_candles, confluence  # noqa: E402
 from cta.data import Candle, normalize_symbol  # noqa: E402
 from cta.report import render_report  # noqa: E402
 from cta.structure import find_breaks, find_swings, swing_trend  # noqa: E402
+from cta.backtest import Features, align_htf, metrics, resample, simulate  # noqa: E402
 
 
 def candles_from_closes(closes, wick=0.5):
@@ -116,6 +117,15 @@ def test_analyze_candles_end_to_end():
     assert "TESTUSDT" in md and "boom" in md and "Golden" in md
 
 
+def test_formula_signals():
+    up = analyze_candles(candles_from_closes([100 * (1.002 ** i) for i in range(400)]), Config())
+    assert up["signals"]["A"]["state"] == "LONG" and up["signals"]["B"]["state"] == "LONG"
+    down = analyze_candles(candles_from_closes([100 * (0.998 ** i) for i in range(400)]), Config())
+    assert down["signals"]["A"]["state"] == "FLAT" and down["signals"]["B"]["state"] == "FLAT"
+    short = analyze_candles(candles_from_closes([100 + i for i in range(120)]), Config())
+    assert short["signals"]["A"]["state"] == "n/a"   # EMA 200 not warmed up
+
+
 def test_warmup_without_ema_slow():
     r = analyze_candles(candles_from_closes([100 + i for i in range(120)]), Config())
     assert r["ema"]["slow"] is None and r["ema"]["cross"] == "n/a"
@@ -128,6 +138,53 @@ def test_normalize_symbol():
     assert normalize_symbol("ETHBTC") == "ETHBTC"
     assert normalize_symbol("bnb") == "BNBUSDT"
     assert normalize_symbol("sol-usdc") == "SOLUSDC"
+
+
+def _bt_candles(opens_closes, start_ms=1_704_067_200_000, step=86_400_000):
+    """Candles from (open, close) pairs, daily, starting 2024-01-01."""
+    return [Candle(start_ms + i * step, o, max(o, c), min(o, c), c, 1.0, start_ms + (i + 1) * step - 1)
+            for i, (o, c) in enumerate(opens_closes)]
+
+
+def test_simulate_next_open_execution_and_costs():
+    # Prices double between bar 1 open and bar 2 close; signal fires at the close of bar 0.
+    F = Features(_bt_candles([(10, 10), (10, 15), (15, 20), (20, 20)]))
+    target = [1, 1, 0, 0]          # long decided at close of bar 0 -> filled at open of bar 1
+    win = {"all": (0, 2**62)}
+    _, w = simulate(F, target, 1, 0.0, win)
+    m = metrics(w["all"], 365)
+    assert abs(m["return"] - 1.0) < 1e-12          # 10 -> 20 exactly, no look-ahead fill
+    assert m["trades"] == 1 and m["win_rate"] == 1.0
+    _, w = simulate(F, target, 1, 0.01, win)        # 1% per side
+    assert abs(metrics(w["all"], 365)["return"] - (2.0 * 0.99 * 0.99 - 1)) < 1e-12
+
+
+def test_simulate_signal_on_last_bar_not_traded():
+    F = Features(_bt_candles([(10, 10), (10, 30)]))
+    _, w = simulate(F, [0, 1], 1, 0.0, {"all": (0, 2**62)})
+    assert metrics(w["all"], 365)["return"] == 0.0  # signal at the final close is never filled
+
+
+def test_max_drawdown():
+    F = Features(_bt_candles([(100, 100), (100, 120), (120, 60), (60, 90)]))
+    _, w = simulate(F, [1, 1, 1, 1], 1, 0.0, {"all": (0, 2**62)})
+    m = metrics(w["all"], 365)
+    assert abs(m["max_dd"] - 0.5) < 1e-12 and abs(m["return"] - (-0.1)) < 1e-12
+
+
+def test_resample_weekly_and_htf_alignment():
+    day = 86_400_000
+    monday = 1_704_067_200_000  # 2024-01-01 was a Monday
+    daily = [Candle(monday + i * day, i, i + 0.5, i - 0.5, i + 0.25, 1.0, monday + (i + 1) * day - 1)
+             for i in range(15)]
+    weeks = resample(daily, 7 * 24 * 60)
+    assert len(weeks) == 3 and weeks[0].open_time == monday
+    assert weeks[0].open == 0 and weeks[0].close == 6.25 and weeks[0].high == 6.5 and weeks[0].volume == 7
+    L, H = Features(daily), Features(weeks)
+    a = align_htf(L, H, [10, 20, 30])
+    assert a[:6] == [None] * 6      # first week not closed until Sunday's close
+    assert a[6] == 10 and a[12] == 10 and a[13] == 20
+    assert a[14] == 20              # the partial 3rd week is never visible
 
 
 if __name__ == "__main__":

@@ -112,7 +112,27 @@ def analyze_candles(candles: Sequence[Candle], cfg: Config = Config()) -> dict:
         "components": components,
         "score": score,
         "bias": bias_label(score, MAX_SCORE),
+        "signals": _formula_signals(cross_state, st_dir),
     }
+
+
+# Rules that survived the out-of-sample backtest on 4h (see docs/backtest.md).
+FORMULAS = {
+    "A": "EMA fast > EMA slow (golden cross) -> LONG, else FLAT",
+    "B": "EMA fast > EMA slow AND Supertrend up -> LONG, else FLAT",
+}
+FORMULA_TF = "4h"
+
+
+def _formula_signals(cross_state, st_dir) -> dict:
+    a = [None if x is None else bool(x) for x in cross_state]
+    b = [None if x is None or d is None else (bool(x) and d == 1) for x, d in zip(cross_state, st_dir)]
+    out = {}
+    for key, series in (("A", a), ("B", b)):
+        cur = series[-1] if series else None
+        out[key] = {"state": "n/a" if cur is None else ("LONG" if cur else "FLAT"),
+                    "since_bars": ind.bars_since_change(series)}
+    return out
 
 
 def _side(score: Optional[float]) -> int:

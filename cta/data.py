@@ -71,8 +71,8 @@ def _get_json(url: str, timeout: float):
 
 def fetch_klines(symbol: str, interval: str, limit: int = MAX_LIMIT,
                  include_open: bool = False, timeout: float = 15.0,
-                 retries: int = 3) -> list[Candle]:
-    """Return up to ``limit`` candles, oldest first.
+                 retries: int = 3, start_time: int | None = None) -> list[Candle]:
+    """Return up to ``limit`` candles, oldest first (the latest ones unless ``start_time``).
 
     The still-forming last candle is dropped unless ``include_open`` is set, so
     every signal is computed on closed candles only.
@@ -81,7 +81,10 @@ def fetch_klines(symbol: str, interval: str, limit: int = MAX_LIMIT,
         raise ValueError(f"unsupported interval {interval!r}; use one of "
                          f"{', '.join(INTERVAL_MINUTES)}")
     limit = max(1, min(int(limit), MAX_LIMIT))
-    query = urllib.parse.urlencode({"symbol": symbol, "interval": interval, "limit": limit})
+    params = {"symbol": symbol, "interval": interval, "limit": limit}
+    if start_time is not None:
+        params["startTime"] = int(start_time)
+    query = urllib.parse.urlencode(params)
 
     errors: list[str] = []
     for host in _hosts():
@@ -125,3 +128,48 @@ def fetch_last_price(symbol: str, timeout: float = 10.0) -> float | None:
         except Exception:  # noqa: BLE001 - best effort, falls back to last close
             continue
     return None
+
+
+def fetch_history(symbol: str, interval: str, start_time: int,
+                  cache_dir: str | os.PathLike | None = None, pause: float = 0.1) -> list[Candle]:
+    """All closed candles from ``start_time`` (ms) until now, paginated 1000 at a time.
+
+    With ``cache_dir`` the candles are kept in ``<cache_dir>/<SYMBOL>_<interval>.csv`` and
+    later calls only download what is newer than the cache.
+    """
+    import csv
+    from pathlib import Path
+
+    candles: list[Candle] = []
+    path = meta = None
+    if cache_dir is not None:
+        path = Path(cache_dir) / f"{symbol}_{interval}.csv"
+        meta = path.with_suffix(".start")  # the start_time the cache was built from
+        cached_from = int(meta.read_text()) if meta.exists() else None
+        if path.exists() and cached_from is not None and cached_from <= start_time:
+            with path.open(newline="") as f:
+                candles = [Candle(int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]),
+                                  float(r[5]), int(r[6])) for r in csv.reader(f)]
+        else:
+            cached_from = start_time
+
+    cursor = candles[-1].open_time + 1 if candles else start_time
+    while True:
+        batch = fetch_klines(symbol, interval, MAX_LIMIT, include_open=False, start_time=cursor)
+        batch = [c for c in batch if c.open_time >= cursor]
+        if not batch:
+            break
+        candles.extend(batch)
+        cursor = batch[-1].open_time + 1
+        if len(batch) < MAX_LIMIT - 1:
+            break
+        time.sleep(pause)
+
+    if path is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", newline="") as f:
+            w = csv.writer(f)
+            for c in candles:
+                w.writerow([c.open_time, c.open, c.high, c.low, c.close, c.volume, c.close_time])
+        meta.write_text(str(cached_from))
+    return [c for c in candles if c.open_time >= start_time]

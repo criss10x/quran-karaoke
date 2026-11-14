@@ -37,6 +37,29 @@ Contoh potongan output:
 | 1w | 74,851.44 | 78,432.03 (-4.57%) | 69,562.63 (+7.60%) | Golden | ▲ up @ 66,811.57 (9b) | Bullish / Range | CHoCH ↑ @ 82,850.00 (6b) | ... | +3 | Bullish |
 ```
 
+## Hasil backtest: formula yang direkomendasikan
+
+Backtest 2018 → 2026 pada BTC, ETH, BNB, SOL, XRP, ADA (1h/4h/1d, 200 formula, train 2019–2023,
+test out-of-sample 2024 → sekarang, biaya 0,15% per sisi). Ringkasan: [`docs/formula.md`](docs/formula.md),
+laporan lengkap: [`docs/backtest.md`](docs/backtest.md).
+
+| 4h, median 6 koin, 2019 → Nov 2026 | Sharpe | CAGR | Max DD | Sharpe test 2024+ |
+|---|---|---|---|---|
+| Buy & hold | 0,87 | +42% | 83% | 0,42 |
+| **A · EMA 50 > EMA 200** (hold saat golden cross, keluar saat death cross) | **1,15** | **+63%** | 69% | **0,74** |
+| **B · A + Supertrend(10,3) up** (konservatif) | 1,04 | +43% | **60%** | 0,60 |
+
+- **4h** adalah timeframe terbaik. **1h** kalah dari buy & hold setelah biaya, **1d** tidak punya edge jelas.
+- Laporan live menampilkan status **LONG/FLAT** formula A dan B di 4h untuk tiap koin.
+- Ada survivorship bias, dan drawdown masih besar. Lihat bagian batasan di `docs/formula.md`.
+
+Jalankan ulang riset (download ±25 menit pertama kali, lalu cache di `data/`):
+
+```bash
+python3 -m cta.research --symbols BTC ETH BNB SOL XRP ADA --tf 1h 4h 1d \
+    --out docs/backtest.md --json data/backtest.json
+```
+
 ## Tiga cara menjalankan
 
 1. **CLI** — perintah di atas.
@@ -87,7 +110,7 @@ Ganti dengan `CTA_BINANCE_HOSTS=https://host1,https://host2`. Maks 1000 candle p
 ## Test
 
 ```bash
-python3 tests/test_cta.py      # offline, data sintetis, tanpa pytest
+python3 tests/test_cta.py      # offline, data sintetis, tanpa pytest (indikator, struktur, engine backtest)
 ```
 
 > Bukan nasihat keuangan. Indikator bersifat lagging; selalu gunakan manajemen risiko.
