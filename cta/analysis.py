@@ -27,8 +27,12 @@ MAX_SCORE = 5  # number of +/-1 components in a timeframe score
 class Config:
     ema_fast: int = 50
     ema_slow: int = 200
-    st_period: int = 10
-    st_mult: float = 3.0
+    rsi_len: int = 14
+    stoch_len: int = 14
+    stoch_k: int = 3
+    stoch_d: int = 3
+    overbought: float = 80.0
+    oversold: float = 20.0
     swing_left: int = 5
     swing_right: int = 5
     limit: int = 1000
@@ -58,7 +62,8 @@ def bias_label(score: float, max_score: float) -> str:
 
 def analyze_candles(candles: Sequence[Candle], cfg: Config = Config()) -> dict:
     """Indicators, structure and a -5..+5 score for one timeframe."""
-    if len(candles) < max(cfg.st_period, cfg.swing_left + cfg.swing_right + 1) + 2:
+    if len(candles) < max(cfg.rsi_len + cfg.stoch_len + cfg.stoch_k + cfg.stoch_d,
+                          cfg.swing_left + cfg.swing_right + 1) + 2:
         raise DataError(f"only {len(candles)} candles — not enough history")
     o_t = [c.open_time for c in candles]
     h = [c.high for c in candles]
@@ -72,14 +77,15 @@ def analyze_candles(candles: Sequence[Candle], cfg: Config = Config()) -> dict:
     slope_n = 5
     fast_slope = _pct(fast, ef[-1 - slope_n]) if fast is not None and len(ef) > slope_n else None
 
-    st_line, st_dir = ind.supertrend(h, lo, cl, cfg.st_period, cfg.st_mult)
+    rsi, k, d = ind.stoch_rsi(cl, cfg.rsi_len, cfg.stoch_len, cfg.stoch_k, cfg.stoch_d)
+    kv, dv = k[-1], d[-1]
     struct = analyze_structure(h, lo, cl, cfg.swing_left, cfg.swing_right)
 
     components = {
         "close_vs_ema_fast": _sign(close - fast) if fast is not None else 0,
         "close_vs_ema_slow": _sign(close - slow) if slow is not None else 0,
         "ema_fast_vs_slow": _sign(fast - slow) if fast is not None and slow is not None else 0,
-        "supertrend": st_dir[-1] or 0,
+        "stoch_rsi": _sign(kv - dv) if kv is not None and dv is not None else 0,
         "structure": {"bullish": 1, "bearish": -1}.get(struct["bias"], 0),
     }
     score = sum(components.values())
@@ -101,12 +107,13 @@ def analyze_candles(candles: Sequence[Candle], cfg: Config = Config()) -> dict:
             "cross_bars_ago": ind.bars_since_change(cross_state),
             "fast_slope_pct": fast_slope,  # % change of EMA fast over the last 5 bars
         },
-        "supertrend": {
-            "period": cfg.st_period, "mult": cfg.st_mult,
-            "direction": {1: "up", -1: "down"}.get(st_dir[-1], "n/a"),
-            "line": st_line[-1],
-            "dist_pct": _pct(close, st_line[-1]),
-            "flip_bars_ago": ind.bars_since_change(st_dir),
+        "stoch_rsi": {
+            "rsi_len": cfg.rsi_len, "stoch_len": cfg.stoch_len,
+            "k_smooth": cfg.stoch_k, "d_smooth": cfg.stoch_d,
+            "rsi": rsi[-1], "k": kv, "d": dv,
+            "zone": _zone(kv, cfg),
+            "momentum": "n/a" if kv is None or dv is None else ("up" if kv > dv else "down"),
+            "last_cross": _stoch_cross(k, d, cfg),
         },
         "structure": struct,
         "components": components,
@@ -116,12 +123,27 @@ def analyze_candles(candles: Sequence[Candle], cfg: Config = Config()) -> dict:
     }
 
 
+def _zone(k: Optional[float], cfg: Config) -> str:
+    if k is None:
+        return "n/a"
+    return "overbought" if k >= cfg.overbought else "oversold" if k <= cfg.oversold else "neutral"
+
+
+def _stoch_cross(k, d, cfg: Config) -> Optional[dict]:
+    """Latest K/D cross, with the zone K was in just before it (oversold bull cross = classic buy)."""
+    x = ind.last_cross(k, d)
+    if x is None:
+        return None
+    i = len(k) - 1 - x["bars_ago"]
+    x["zone"] = _zone(k[i - 1], cfg)
+    return x
+
+
 # Rules that survived the out-of-sample backtest on BTC 4h (see docs/formula.md). They are
 # evaluated with the backtest engine's own Features so live signals match what was tested.
 FORMULAS = {
     "A": "EMA fast > EMA slow (golden cross) -> LONG, else FLAT",
-    "B": "score >= +4, i.e. all components bullish (close > both EMAs, golden cross, "
-         "Supertrend up, structure bullish) -> LONG, else FLAT",
+    "B": "market structure bullish (latest BOS/CHoCH up) AND close > EMA slow -> LONG, else FLAT",
 }
 FORMULA_TF = "4h"
 
@@ -131,9 +153,9 @@ def _formula_signals(candles: Sequence[Candle], cfg: "Config") -> dict:
 
     F = Features(candles)
     ef, es = F.ema(cfg.ema_fast), F.ema(cfg.ema_slow)
-    score = F.score(cfg.ema_fast, cfg.ema_slow, cfg.st_period, cfg.st_mult, cfg.swing_left)
+    sb = F.struct_bias(cfg.swing_left)
     a = [None if f is None or s_ is None else f > s_ for f, s_ in zip(ef, es)]
-    b = [None if s_ is None else sc >= 4 for sc, s_ in zip(score, es)]
+    b = [None if s_ is None else (bias == 1 and c > s_) for bias, c, s_ in zip(sb, F.c, es)]
     out = {}
     for key, series in (("A", a), ("B", b)):
         cur = series[-1] if series else None
@@ -166,15 +188,15 @@ def confluence(per_tf: dict[str, dict]) -> dict:
 
     if htf_side == 1 and ltf_side == 1:
         read = ("Tren naik selaras di semua lapisan. Cari entry buy saat pullback ke EMA "
-                "fast / garis Supertrend / HL terakhir, bukan mengejar harga.")
+                "fast / HL terakhir dengan Stoch RSI keluar dari oversold, bukan mengejar harga.")
     elif htf_side == 1 and ltf_side == -1:
         read = ("Koreksi (pullback) di dalam tren naik timeframe besar. Tunggu CHoCH bullish "
-                "atau Supertrend flip up di timeframe kecil sebelum buy.")
+                "atau Stoch RSI cross naik dari oversold di timeframe kecil sebelum buy.")
     elif htf_side == 1:
         read = "Timeframe besar bullish, timeframe kecil netral/konsolidasi — bias buy, tunggu pemicu."
     elif htf_side == -1 and ltf_side == -1:
-        read = ("Tren turun selaras di semua lapisan. Rally ke EMA / Supertrend / LH terakhir "
-                "berpotensi jadi area sell; hindari menangkap pisau jatuh.")
+        read = ("Tren turun selaras di semua lapisan. Rally ke EMA / LH terakhir (apalagi saat "
+                "Stoch RSI overbought) berpotensi jadi area sell; hindari menangkap pisau jatuh.")
     elif htf_side == -1 and ltf_side == 1:
         read = ("Relief rally di dalam tren turun timeframe besar. Waspada penolakan di "
                 "resistance; tunggu CHoCH bearish di timeframe kecil untuk lanjutan turun.")

@@ -6,7 +6,7 @@ from typing import Optional
 
 from .data import INTERVAL_MINUTES
 
-ARROW = {"up": "▲ up", "down": "▼ down", "n/a": "n/a"}
+ZONE_ID = {"overbought": "overbought", "oversold": "oversold", "neutral": "netral", "n/a": "n/a"}
 STRUCT_ID = {"bullish": "Bullish", "bearish": "Bearish", "range": "Range", "unknown": "?"}
 
 DISCLAIMER = ("_Bukan nasihat keuangan. Indikator bersifat lagging; selalu pakai manajemen "
@@ -32,6 +32,19 @@ def fmt_pct(p: Optional[float], signed: bool = True) -> str:
 
 def _ago(n: Optional[int]) -> str:
     return "–" if n is None else f"{n} bar lalu"
+
+
+def _num(x: Optional[float]) -> str:
+    return "–" if x is None else f"{x:.1f}"
+
+
+def _stoch_cell(sr: dict) -> str:
+    arrow = {"up": "▲", "down": "▼"}.get(sr["momentum"], "")
+    cell = f"{_num(sr['k'])}/{_num(sr['d'])} {arrow} {ZONE_ID[sr['zone']]}"
+    x = sr["last_cross"]
+    if x:
+        cell += f" · cross {'↑' if x['direction'] == 'bull' else '↓'} {x['bars_ago']}b"
+    return cell
 
 
 def _break_cell(b: Optional[dict]) -> str:
@@ -63,10 +76,10 @@ def render_symbol(res: dict) -> str:
             ago = "" if v["since_bars"] is None else f" sejak {v['since_bars']} bar"
             return f"**{v['state']}**{ago}"
         lines.append(f"**Formula teruji backtest (4h):** A · EMA{ef}/{es} cross → {sig('A')} · "
-                     f"B · semua komponen bullish → {sig('B')} <sub>(lihat docs/formula.md)</sub>")
+                     f"B · struktur bullish + close > EMA{es} → {sig('B')} <sub>(lihat docs/formula.md)</sub>")
         lines.append("")
 
-    head = (f"| TF | Close | EMA{ef} | EMA{es} | Cross | Supertrend | Struktur (bias / swing) "
+    head = (f"| TF | Close | EMA{ef} | EMA{es} | Cross | Stoch RSI K/D | Struktur (bias / swing) "
             f"| BOS/CHoCH terakhir | Support | Resistance | Skor | Bias |")
     lines += [head, "|" + "---|" * 12]
     for tf in tfs:
@@ -74,17 +87,16 @@ def render_symbol(res: dict) -> str:
         if "error" in r:
             lines.append(f"| {tf} | ⚠️ {r['error']} |" + " |" * 10)
             continue
-        e, st, s = r["ema"], r["supertrend"], r["structure"]
+        e, sr, s = r["ema"], r["stoch_rsi"], r["structure"]
         cross = e["cross"] if e["cross"] == "n/a" else \
             f"{'Golden' if e['cross'] == 'golden' else 'Death'}" + \
             (f" ({e['cross_bars_ago']}b)" if e["cross_bars_ago"] is not None else "")
-        flip = "" if st["flip_bars_ago"] is None else f" ({st['flip_bars_ago']}b)"
         lines.append(
             f"| {tf} | {fmt_price(r['close'])} "
             f"| {fmt_price(e['fast'])} ({fmt_pct(e['dist_fast_pct'])}) "
             f"| {fmt_price(e['slow'])} ({fmt_pct(e['dist_slow_pct'])}) "
             f"| {cross} "
-            f"| {ARROW[st['direction']]} @ {fmt_price(st['line'])}{flip} "
+            f"| {_stoch_cell(sr)} "
             f"| {STRUCT_ID[s['bias']]} / {STRUCT_ID[s['swing_trend']]} "
             f"| {_break_cell(s['last_break'])} "
             f"| {fmt_price(s['support'])} | {fmt_price(s['resistance'])} "
@@ -97,15 +109,20 @@ def render_symbol(res: dict) -> str:
         r = res["timeframes"][tf]
         if "error" in r:
             continue
-        e, st, s = r["ema"], r["supertrend"], r["structure"]
+        e, sr, s = r["ema"], r["stoch_rsi"], r["structure"]
+        x = sr["last_cross"]
+        cross_txt = "–" if not x else (f"{'naik' if x['direction'] == 'bull' else 'turun'} "
+                                       f"{_ago(x['bars_ago'])} di zona {ZONE_ID[x['zone']]} "
+                                       f"(K {_num(x['value'])})")
         swings = " → ".join(f"{sw['label'] or sw['kind'][0].upper()} {fmt_price(sw['price'])}"
                             for sw in s["recent_swings"]) or "–"
         lines += [
             f"**{tf}** (candle {r['candle_time']}, {r['bars']} bar)",
             f"- EMA{ef} slope 5 bar: {fmt_pct(e['fast_slope_pct'])}; "
             f"cross EMA{ef}/{es}: {e['cross']} sejak {_ago(e['cross_bars_ago'])}",
-            f"- Supertrend({st['period']}, {st['mult']}): {st['direction']}, jarak {fmt_pct(st['dist_pct'])}, "
-            f"flip {_ago(st['flip_bars_ago'])}",
+            f"- Stoch RSI({sr['rsi_len']}, {sr['stoch_len']}, {sr['k_smooth']}, {sr['d_smooth']}): "
+            f"RSI {_num(sr['rsi'])}, K {_num(sr['k'])}, D {_num(sr['d'])} ({ZONE_ID[sr['zone']]}, "
+            f"momentum {sr['momentum']}); cross K/D terakhir: {cross_txt}",
             f"- Swing terakhir: {swings}",
             f"- BOS terakhir: {_break_cell(s['last_bos'])}; CHoCH terakhir: {_break_cell(s['last_choch'])}",
             f"- Komponen skor: " + ", ".join(f"{k} {v:+d}" for k, v in r["components"].items()),
@@ -118,13 +135,15 @@ def render_symbol(res: dict) -> str:
 
 def render_report(results: list[dict]) -> str:
     parts = ["# Analisa Crypto Multi-Timeframe", "",
-             "EMA 50/200 · Supertrend · Market Structure (BOS/CHoCH) — data: Binance spot, candle tertutup.",
+             "EMA 50/200 · Stoch RSI 14 · Market Structure (BOS/CHoCH) — data: Binance spot, candle tertutup.",
              ""]
     parts += [render_symbol(r) for r in results]
     parts += [
         "### Cara membaca",
-        "- **Skor TF** (−5..+5): close vs EMA fast, close vs EMA slow, EMA fast vs slow, arah Supertrend, "
-        "bias struktur (arah BOS/CHoCH terakhir). Masing-masing ±1.",
+        "- **Skor TF** (−5..+5): close vs EMA fast, close vs EMA slow, EMA fast vs slow, momentum Stoch RSI "
+        "(%K vs %D), bias struktur (arah BOS/CHoCH terakhir). Masing-masing ±1.",
+        "- **Stoch RSI**: ≥ 80 overbought, ≤ 20 oversold. Cross ↑ dari oversold = momentum mulai naik; "
+        "cross ↓ dari overbought = momentum mulai turun. Di tren kuat bisa lama menempel di zona ekstrem.",
         "- **Confluence** (−100%..+100%): rata-rata tertimbang skor; timeframe besar berbobot lebih.",
         "- **BOS** = break searah bias struktur (lanjutan tren); **CHoCH** = break pertama melawan bias "
         "(tanda awal pembalikan). `(Nb)` = N bar lalu.",

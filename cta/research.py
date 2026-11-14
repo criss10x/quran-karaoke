@@ -142,7 +142,7 @@ def num(x, d=2):
 
 
 def render(rows, symbols, tfs, cost, top=12):
-    L = ["# Backtest — EMA · Supertrend · Market Structure", ""]
+    L = ["# Backtest — EMA · Stoch RSI · Market Structure", ""]
     L.append(f"Dibuat {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC · data Binance spot · koin: "
              f"{', '.join(symbols)} · biaya {cost * 100:.2f}% per sisi (fee + slippage) · "
              f"long/flat (spot, tanpa leverage).")
@@ -204,11 +204,12 @@ def render(rows, symbols, tfs, cost, top=12):
                      f"| **{num(t.get('sharpe'))}** | **{pct(t.get('cagr'))}** | **{pct(t.get('max_dd'))}** "
                      f"| {pct(t.get('exposure'))} | {num(t.get('tpy'), 1)} | {pct(t.get('win'))} |")
         L.append("")
-        defaults = ["EMA_CROSS(ema=50/200)", "CLOSE>EMA(ema=200)", "ST(st=10/3)", "STRUCT(swing=5)",
-                    "ST+CLOSE>EMA(st=10/3, ema=200)", "ST+EMA_CROSS(st=10/3, ema=50/200)",
-                    "ST+STRUCT(st=10/3, swing=5)", "SCORE>=(k=3, st=10/3, ema=50/200, swing=5)",
-                    "SCORE>=(k=4, st=10/3, ema=50/200, swing=5)", "ST+HTF_ST(st=10/3, htf_st=10/3)"]
-        L.append("<details><summary>Parameter default (EMA 50/200, Supertrend 10/3, swing 5)</summary>")
+        defaults = ["EMA_CROSS(ema=50/200)", "CLOSE>EMA(ema=200)", "STOCH_K>D",
+                    "STOCH_SWING(os=20, ob=80)", "STRUCT(swing=5)", "EMA_CROSS+STOCH_K>D(ema=50/200)",
+                    "EMA_CROSS+STOCH_DIP(ema=50/200, os=20)", "EMA_CROSS+STOCH_SWING(ema=50/200, os=20, ob=80)",
+                    "STRUCT+STOCH_DIP(swing=5, os=20)", "SCORE>=(k=3, ema=50/200, swing=5)",
+                    "SCORE>=(k=4, ema=50/200, swing=5)", "EMA_CROSS+HTF_EMA_CROSS(ema=50/200)"]
+        L.append("<details><summary>Parameter default (EMA 50/200, Stoch RSI 14/14/3/3 level 20/80, swing 5)</summary>")
         L.append("")
         L.append("| Formula | Train Sharpe | Train CAGR | Train MaxDD | Test Sharpe | Test CAGR | Test MaxDD | Trade/thn |")
         L.append("|---|---|---|---|---|---|---|---|")

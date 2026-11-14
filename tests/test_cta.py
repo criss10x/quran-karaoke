@@ -11,7 +11,8 @@ from cta.analysis import Config, analyze_candles, confluence  # noqa: E402
 from cta.data import Candle, normalize_symbol  # noqa: E402
 from cta.report import render_report  # noqa: E402
 from cta.structure import find_breaks, find_swings, swing_trend  # noqa: E402
-from cta.backtest import Features, align_htf, metrics, resample, simulate  # noqa: E402
+from cta.backtest import (Features, align_htf, entry_exit, make_rules, metrics,  # noqa: E402
+                          resample, simulate)
 
 
 def candles_from_closes(closes, wick=0.5):
@@ -45,22 +46,46 @@ def test_ema_constant_and_short():
     assert ind.ema([1, 2], 5) == [None, None]
 
 
-def test_rma_and_true_range():
-    tr = ind.true_range([10, 12, 11], [9, 10, 8], [9.5, 11, 9])
-    assert tr == [1, 2.5, 3]                    # gap vs previous close counts
+def test_rma():
     r = ind.rma([2, 4, 6, 8], 2)
     assert r[1] == 3 and r[2] == 4.5 and r[3] == 6.25
 
 
-def test_supertrend_flips():
-    up = [100 + i for i in range(60)]
-    down = [159 - 2 * i for i in range(60)]
-    c = candles_from_closes(up + down)
-    line, d = ind.supertrend([x.high for x in c], [x.low for x in c], [x.close for x in c], 10, 3)
-    assert d[55] == 1 and line[55] < up[55]      # uptrend: line below price
-    assert d[-1] == -1 and line[-1] > c[-1].close  # downtrend: line above price
-    flip = next(i for i in range(60, 120) if d[i] == -1)
-    assert 60 < flip < 75
+def test_rsi_matches_wilder_reference():
+    # StockCharts' RSI(14) worked example (Wilder smoothing, same as TradingView ta.rsi).
+    closes = [44.3389, 44.0902, 44.1497, 43.6124, 44.3278, 44.8264, 45.0955, 45.4245, 45.8433,
+              46.0826, 45.8931, 46.0328, 45.6140, 46.2820, 46.2820, 46.0028, 46.0328, 46.4116,
+              46.2222, 45.6439, 46.2122, 46.2521, 45.7137, 46.4515, 45.7835, 45.3548, 44.0288,
+              44.1783, 44.2181, 44.5672, 43.4205, 42.6628, 43.1314]
+    expected = [70.53, 66.32, 66.55, 69.41, 66.36, 57.97, 62.93, 63.26, 56.06, 62.38, 54.71,
+                50.42, 39.99, 41.46, 41.87, 45.46, 37.30, 33.08, 37.77]
+    r = ind.rsi(closes, 14)
+    assert r[13] is None
+    assert all(abs(a - b) < 0.005 for a, b in zip(r[14:], expected))
+
+
+def test_rsi_extremes():
+    assert ind.rsi(list(range(1, 30)), 14)[-1] == 100.0
+    assert ind.rsi(list(range(30, 1, -1)), 14)[-1] == 0.0
+
+
+def test_stoch_rsi_bounds_and_smoothing():
+    closes = [100 + 10 * math.sin(i / 7) + 3 * math.sin(i / 2.3) for i in range(300)]
+    r, k, d = ind.stoch_rsi(closes, 14, 14, 3, 3)
+    first_k = next(i for i, v in enumerate(k) if v is not None)
+    assert first_k == 14 + 13 + 2          # rsi warm-up + stoch window + K smoothing
+    vals = [v for v in k + d if v is not None]
+    assert min(vals) >= 0 and max(vals) <= 100
+    assert min(vals) < 20 and max(vals) > 80  # an oscillating series visits both zones
+    i = 200
+    assert abs(d[i] - (k[i] + k[i - 1] + k[i - 2]) / 3) < 1e-9
+
+
+def test_last_cross():
+    assert ind.last_cross([1, 2, 3], [2, 2, 2]) == {"direction": "bull", "bars_ago": 0, "value": 3}
+    assert ind.last_cross([1, 3, 3], [2, 2, 2])["bars_ago"] == 1
+    assert ind.last_cross([3, 1, 1, 1], [2, 2, 2, 2])["direction"] == "bear"
+    assert ind.last_cross([1, 1], [2, 2]) is None
 
 
 def test_bars_since_change():
@@ -106,7 +131,7 @@ def test_analyze_candles_end_to_end():
     closes = [100 * (1.002 ** i) + 3 * math.sin(i / 4) for i in range(400)]
     r = analyze_candles(candles_from_closes(closes), Config())
     assert r["ema"]["cross"] == "golden"
-    assert r["supertrend"]["direction"] == "up"
+    assert r["stoch_rsi"]["k"] is not None and r["stoch_rsi"]["zone"] in ("overbought", "oversold", "neutral")
     assert r["score"] >= 3 and "Bullish" in r["bias"]
     conf = confluence({"1h": r, "4h": r, "1d": r})
     assert conf["score_pct"] > 50 and "naik" in conf["summary"]
@@ -118,12 +143,29 @@ def test_analyze_candles_end_to_end():
 
 
 def test_formula_signals():
-    up = analyze_candles(candles_from_closes([100 * (1.002 ** i) for i in range(400)]), Config())
+    wavy_up = [100 * (1.002 ** i) + 2 * math.sin(i / 3) for i in range(400)]
+    up = analyze_candles(candles_from_closes(wavy_up), Config())
     assert up["signals"]["A"]["state"] == "LONG" and up["signals"]["B"]["state"] == "LONG"
-    down = analyze_candles(candles_from_closes([100 * (0.998 ** i) for i in range(400)]), Config())
+    wavy_down = [100 * (0.998 ** i) + 2 * math.sin(i / 3) for i in range(400)]
+    down = analyze_candles(candles_from_closes(wavy_down), Config())
     assert down["signals"]["A"]["state"] == "FLAT" and down["signals"]["B"]["state"] == "FLAT"
-    short = analyze_candles(candles_from_closes([100 + i for i in range(120)]), Config())
+    short = analyze_candles(candles_from_closes([100 + i + math.sin(i) for i in range(120)]), Config())
     assert short["signals"]["A"]["state"] == "n/a"   # EMA 200 not warmed up
+
+
+def test_entry_exit_state_machine():
+    assert entry_exit([0, 1, 0, 0, 1, 0], [0, 0, 0, 1, 0, 0]) == [0, 1, 1, 0, 1, 1]
+    assert entry_exit([1, 1], [1, 0]) == [0, 1]     # exit wins on the same bar
+
+
+def test_formula_b_matches_backtest_rule():
+    closes = [100 + 15 * math.sin(i / 25) + i * 0.03 + 2 * math.sin(i / 3) for i in range(800)]
+    c = candles_from_closes(closes)
+    rule = next(r for r in make_rules() if r.label == "STRUCT+CLOSE>EMA(swing=5, ema=200)")
+    target = rule.fn(Features(c), None)
+    for n in (400, 550, 700, 800):
+        state = analyze_candles(c[:n], Config())["signals"]["B"]["state"]
+        assert state == ("LONG" if target[n - 1] else "FLAT")
 
 
 def test_live_score_matches_backtest_features():
@@ -131,7 +173,7 @@ def test_live_score_matches_backtest_features():
     c = candles_from_closes(closes)
     cfg = Config()
     F = Features(c)
-    sc = F.score(cfg.ema_fast, cfg.ema_slow, cfg.st_period, cfg.st_mult, cfg.swing_left)
+    sc = F.score(cfg.ema_fast, cfg.ema_slow, cfg.swing_left)
     for n in (300, 450, 600):
         assert analyze_candles(c[:n], cfg)["score"] == sc[n - 1]
 
@@ -195,6 +237,19 @@ def test_resample_weekly_and_htf_alignment():
     assert a[:6] == [None] * 6      # first week not closed until Sunday's close
     assert a[6] == 10 and a[12] == 10 and a[13] == 20
     assert a[14] == 20              # the partial 3rd week is never visible
+
+
+def test_rules_have_no_lookahead():
+    # Changing only the future must never change a rule's past targets.
+    closes = [100 + 10 * math.sin(i / 9) + i * 0.1 + 3 * math.sin(i / 2.1) for i in range(700)]
+    full = candles_from_closes(closes)
+    cut = 500
+    altered = full[:cut] + candles_from_closes([c * 1.5 for c in closes])[cut:]
+    F1, F2 = Features(full), Features(altered)
+    H1, H2 = Features(resample(full, 240)), Features(resample(altered, 240))
+    for rule in make_rules():
+        a, b = rule.fn(F1, H1), rule.fn(F2, H2)
+        assert a[:cut - 10] == b[:cut - 10], rule.label
 
 
 if __name__ == "__main__":

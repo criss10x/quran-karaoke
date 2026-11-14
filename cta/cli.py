@@ -15,7 +15,7 @@ from .report import render_report
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="python3 -m cta",
-        description="Analisa crypto multi-timeframe: EMA 50/200, Supertrend, market structure "
+        description="Analisa crypto multi-timeframe: EMA 50/200, Stoch RSI, market structure "
                     "(data Binance spot, tanpa API key).")
     p.add_argument("symbols", nargs="*", default=["BTCUSDT"],
                    help="Pair Binance, mis. BTCUSDT ETHBTC; 'sol' otomatis jadi SOLUSDT (default: BTCUSDT)")
@@ -28,8 +28,10 @@ def build_parser() -> argparse.ArgumentParser:
     g = p.add_argument_group("parameter indikator")
     g.add_argument("--ema-fast", type=int, default=50)
     g.add_argument("--ema-slow", type=int, default=200)
-    g.add_argument("--st-period", type=int, default=10, help="ATR period Supertrend (default 10)")
-    g.add_argument("--st-mult", type=float, default=3.0, help="Multiplier Supertrend (default 3)")
+    g.add_argument("--rsi-len", type=int, default=14, help="Periode RSI untuk Stoch RSI (default 14)")
+    g.add_argument("--stoch-len", type=int, default=14, help="Periode stochastic Stoch RSI (default 14)")
+    g.add_argument("--stoch-k", type=int, default=3, help="Smoothing %%K (default 3)")
+    g.add_argument("--stoch-d", type=int, default=3, help="Smoothing %%D (default 3)")
     g.add_argument("--swing", type=int, default=5,
                    help="Bar kiri/kanan untuk swing high/low market structure (default 5)")
     g.add_argument("--limit", type=int, default=1000, help="Jumlah candle per timeframe (maks 1000)")
@@ -47,8 +49,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.ema_fast >= args.ema_slow:
         print("--ema-fast harus lebih kecil dari --ema-slow", file=sys.stderr)
         return 2
-    cfg = Config(ema_fast=args.ema_fast, ema_slow=args.ema_slow, st_period=args.st_period,
-                 st_mult=args.st_mult, swing_left=args.swing, swing_right=args.swing,
+    cfg = Config(ema_fast=args.ema_fast, ema_slow=args.ema_slow, rsi_len=args.rsi_len,
+                 stoch_len=args.stoch_len, stoch_k=args.stoch_k, stoch_d=args.stoch_d,
+                 swing_left=args.swing, swing_right=args.swing,
                  limit=args.limit, include_open=args.include_open)
     tfs = list(dict.fromkeys(args.tf))  # dedupe, keep order
     symbols = list(dict.fromkeys(normalize_symbol(s) for s in args.symbols))

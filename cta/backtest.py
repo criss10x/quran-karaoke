@@ -1,4 +1,4 @@
-"""Backtest of rule sets built from EMA, Supertrend and market structure.
+"""Backtest of rule sets built from EMA, Stoch RSI and market structure.
 
 Execution model (no look-ahead):
 * a rule produces a target position from information available at the **close** of bar i;
@@ -72,9 +72,10 @@ class Features:
     def ema(self, n: int):
         return self._memo(("ema", n), lambda: ind.ema(self.c, n))
 
-    def st_dir(self, period: int, mult: float):
-        return self._memo(("st", period, mult),
-                          lambda: ind.supertrend(self.h, self.l, self.c, period, mult)[1])
+    def stoch(self, rsi_len: int = 14, stoch_len: int = 14, k: int = 3, d: int = 3):
+        """``(k, d)`` of Stoch RSI."""
+        return self._memo(("stoch", rsi_len, stoch_len, k, d),
+                          lambda: ind.stoch_rsi(self.c, rsi_len, stoch_len, k, d)[1:])
 
     def struct_bias(self, swing: int):
         """+1 / -1 / 0 per bar: direction of the latest BOS/CHoCH known at that bar's close."""
@@ -91,12 +92,16 @@ class Features:
             return out
         return self._memo(("struct", swing), build)
 
-    def score(self, ef: int, es: int, period: int, mult: float, swing: int):
+    def score(self, ef: int, es: int, swing: int, stoch: tuple = (14, 14, 3, 3)):
+        """Per-bar copy of the live -5..+5 score (see ``analysis.analyze_candles``)."""
         def build():
-            f, s, d, b = self.ema(ef), self.ema(es), self.st_dir(period, mult), self.struct_bias(swing)
+            f, s, b = self.ema(ef), self.ema(es), self.struct_bias(swing)
+            k, d = self.stoch(*stoch)
             out = []
             for i, c in enumerate(self.c):
-                v = (d[i] or 0) + b[i]
+                v = b[i]
+                if k[i] is not None and d[i] is not None:
+                    v += (k[i] > d[i]) - (k[i] < d[i])
                 if f[i] is not None:
                     v += (c > f[i]) - (c < f[i])
                 if s[i] is not None:
@@ -105,7 +110,7 @@ class Features:
                     v += (f[i] > s[i]) - (f[i] < s[i])
                 out.append(v)
             return out
-        return self._memo(("score", ef, es, period, mult, swing), build)
+        return self._memo(("score", ef, es, swing, tuple(stoch)), build)
 
 
 def align_htf(ltf: Features, htf: Features, values: Sequence) -> list:
@@ -142,61 +147,95 @@ def _gt(a, b) -> bool:
     return a is not None and b is not None and a > b
 
 
-def _htf_st(F: Features, H: Features) -> list:
-    return F._memo(("htf_st", id(H)), lambda: align_htf(F, H, H.st_dir(10, 3.0)))
+def _htf_golden(F: Features, H: Features, ef: int, es: int) -> list:
+    return F._memo(("htf_golden", id(H), ef, es),
+                   lambda: align_htf(F, H, [_gt(a, b) for a, b in zip(H.ema(ef), H.ema(es))]))
 
 
-def _htf_above_ema(F: Features, H: Features, n: int) -> list:
-    return F._memo(("htf_ema", id(H), n),
-                   lambda: align_htf(F, H, [_gt(c, e) for c, e in zip(H.c, H.ema(n))]))
+def stoch_crosses(F: Features, os_: float, ob: float) -> tuple[list, list]:
+    """Per bar: bullish K/D cross starting below ``os_``; bearish K/D cross starting above ``ob``."""
+    def build():
+        k, d = F.stoch()
+        bull, bear = [False] * len(k), [False] * len(k)
+        for i in range(1, len(k)):
+            if None in (k[i], d[i], k[i - 1], d[i - 1]):
+                continue
+            bull[i] = k[i - 1] <= d[i - 1] and k[i] > d[i] and k[i - 1] < os_
+            bear[i] = k[i - 1] >= d[i - 1] and k[i] < d[i] and k[i - 1] > ob
+        return bull, bear
+    return F._memo(("stoch_x", os_, ob), build)
 
 
-def make_rules(st_grid=((7, 2.0), (7, 3.0), (10, 2.0), (10, 3.0), (10, 4.0), (14, 2.0), (14, 3.0),
-                        (14, 4.0), (20, 2.0), (20, 3.0), (20, 4.0), (7, 4.0)),
-               ema_grid=((20, 50), (50, 100), (50, 200)),
-               swing_grid=(3, 5, 10)) -> list[Rule]:
+def entry_exit(entry: Sequence[bool], exit_: Sequence[bool]) -> list[int]:
+    """Stateful position: go long on ``entry``, stay long until ``exit_`` (exit wins ties)."""
+    pos, out = 0, []
+    for en, ex in zip(entry, exit_):
+        if pos and ex:
+            pos = 0
+        elif not pos and en and not ex:
+            pos = 1
+        out.append(pos)
+    return out
+
+
+def make_rules(ema_grid=((20, 50), (50, 100), (50, 200)), swing_grid=(3, 5, 10),
+               os_grid=(20, 30, 50), ob_grid=(70, 80)) -> list[Rule]:
+    """Rule library. Stoch RSI is fixed at 14/14/3/3; only its trigger levels vary."""
     R: list[Rule] = []
 
     def add(name, params, fn):
         R.append(Rule(name, tuple(params.items()), fn))
 
+    def golden(F, ef, es):
+        return [_gt(a, b) for a, b in zip(F.ema(ef), F.ema(es))]
+
+    def kd_up(F):
+        k, d = F.stoch()
+        return [_gt(a, b) for a, b in zip(k, d)]
+
     add("BUY_HOLD", {}, lambda F, H: [1] * len(F.c))
+    add("STOCH_K>D", {}, lambda F, H: [int(x) for x in kd_up(F)])
+    for os_ in (20, 30):
+        for ob in ob_grid:
+            add("STOCH_SWING", {"os": os_, "ob": ob},
+                lambda F, H, os_=os_, ob=ob: entry_exit(*stoch_crosses(F, os_, ob)))
     for ef, es in ema_grid:
-        add("EMA_CROSS", {"ema": f"{ef}/{es}"},
-            lambda F, H, ef=ef, es=es: [int(_gt(a, b)) for a, b in zip(F.ema(ef), F.ema(es))])
+        e = f"{ef}/{es}"
+        add("EMA_CROSS", {"ema": e}, lambda F, H, ef=ef, es=es: [int(g) for g in golden(F, ef, es)])
+        add("EMA_CROSS+STOCH_K>D", {"ema": e},
+            lambda F, H, ef=ef, es=es: [int(g and u) for g, u in zip(golden(F, ef, es), kd_up(F))])
+        add("EMA_CROSS+HTF_EMA_CROSS", {"ema": e},
+            lambda F, H, ef=ef, es=es: [int(g and bool(h)) for g, h in
+                                        zip(golden(F, ef, es), _htf_golden(F, H, ef, es))])
+        for os_ in os_grid:
+            # Wait for a Stoch RSI dip inside the uptrend, hold until the death cross.
+            add("EMA_CROSS+STOCH_DIP", {"ema": e, "os": os_},
+                lambda F, H, ef=ef, es=es, os_=os_: entry_exit(
+                    [g and b for g, b in zip(golden(F, ef, es), stoch_crosses(F, os_, 80)[0])],
+                    [not g for g in golden(F, ef, es)]))
+            for ob in ob_grid:
+                # Same entry, but also take profit on a bearish cross from overbought.
+                add("EMA_CROSS+STOCH_SWING", {"ema": e, "os": os_, "ob": ob},
+                    lambda F, H, ef=ef, es=es, os_=os_, ob=ob: entry_exit(
+                        [g and b for g, b in zip(golden(F, ef, es), stoch_crosses(F, os_, ob)[0])],
+                        [(not g) or x for g, x in zip(golden(F, ef, es), stoch_crosses(F, os_, ob)[1])]))
     for n in sorted({e for pair in ema_grid for e in pair}):
         add("CLOSE>EMA", {"ema": n},
             lambda F, H, n=n: [int(_gt(c, e)) for c, e in zip(F.c, F.ema(n))])
-    for p, m in st_grid:
-        add("ST", {"st": f"{p}/{m:g}"}, lambda F, H, p=p, m=m: [int(d == 1) for d in F.st_dir(p, m)])
     for sw in swing_grid:
         add("STRUCT", {"swing": sw}, lambda F, H, sw=sw: [int(b == 1) for b in F.struct_bias(sw)])
         for _, es in ema_grid:
             add("STRUCT+CLOSE>EMA", {"swing": sw, "ema": es},
                 lambda F, H, sw=sw, es=es: [int(b == 1 and _gt(c, e))
                                             for b, c, e in zip(F.struct_bias(sw), F.c, F.ema(es))])
-    for p, m in st_grid:
-        for ef, es in ema_grid:
-            add("ST+CLOSE>EMA", {"st": f"{p}/{m:g}", "ema": es},
-                lambda F, H, p=p, m=m, es=es: [int(d == 1 and _gt(c, e))
-                                               for d, c, e in zip(F.st_dir(p, m), F.c, F.ema(es))])
-            add("ST+EMA_CROSS", {"st": f"{p}/{m:g}", "ema": f"{ef}/{es}"},
-                lambda F, H, p=p, m=m, ef=ef, es=es: [int(d == 1 and _gt(a, b)) for d, a, b in
-                                                      zip(F.st_dir(p, m), F.ema(ef), F.ema(es))])
-        for sw in swing_grid:
-            add("ST+STRUCT", {"st": f"{p}/{m:g}", "swing": sw},
-                lambda F, H, p=p, m=m, sw=sw: [int(d == 1 and b == 1)
-                                               for d, b in zip(F.st_dir(p, m), F.struct_bias(sw))])
+        for os_ in os_grid:
+            add("STRUCT+STOCH_DIP", {"swing": sw, "os": os_},
+                lambda F, H, sw=sw, os_=os_: entry_exit(
+                    [b == 1 and x for b, x in zip(F.struct_bias(sw), stoch_crosses(F, os_, 80)[0])],
+                    [b == -1 for b in F.struct_bias(sw)]))
         for k in (3, 4, 5):
-            add("SCORE>=", {"k": k, "st": f"{p}/{m:g}", "ema": "50/200", "swing": 5},
-                lambda F, H, p=p, m=m, k=k: [int(s >= k) for s in F.score(50, 200, p, m, 5)])
-        # Higher-timeframe filters (HTF candle must be closed).
-        add("ST+HTF_ST", {"st": f"{p}/{m:g}", "htf_st": "10/3"},
-            lambda F, H, p=p, m=m: [int(d == 1 and h == 1) for d, h in
-                                    zip(F.st_dir(p, m), _htf_st(F, H))])
-        add("ST+HTF_CLOSE>EMA50", {"st": f"{p}/{m:g}"},
-            lambda F, H, p=p, m=m: [int(d == 1 and bool(h)) for d, h in
-                                    zip(F.st_dir(p, m), _htf_above_ema(F, H, 50))])
+            add("SCORE>=", {"k": k, "ema": "50/200", "swing": sw},
+                lambda F, H, sw=sw, k=k: [int(s >= k) for s in F.score(50, 200, sw)])
     return R
 
 

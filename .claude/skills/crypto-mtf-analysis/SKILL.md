@@ -1,6 +1,6 @@
 ---
 name: crypto-mtf-analysis
-description: Multi-timeframe crypto technical analysis with EMA 50/200, Supertrend (10,3) and market structure (swing HH/HL/LH/LL, BOS, CHoCH) on live Binance spot candles. Use when the user asks to analyse a coin or pair (BTC, ETH, SOL, BTCUSDT, ETHBTC, ...), asks for trend/bias, support/resistance, EMA cross, Supertrend or market structure across timeframes, or invokes /crypto-mtf-analysis. Works in Indonesian or English.
+description: Multi-timeframe crypto technical analysis with EMA 50/200, Stoch RSI (14) and market structure (swing HH/HL/LH/LL, BOS, CHoCH) on live Binance spot candles. Use when the user asks to analyse a coin or pair (BTC, ETH, SOL, BTCUSDT, ETHBTC, ...), asks for trend/bias, support/resistance, EMA cross, Stoch RSI / overbought / oversold or market structure across timeframes, or invokes /crypto-mtf-analysis. Works in Indonesian or English.
 ---
 
 # Crypto multi-timeframe analysis
@@ -13,7 +13,7 @@ Data: Binance public spot klines via `data-api.binance.vision` (fallback `api.bi
 1. **Parse the request.** Symbols (default `BTCUSDT`; a bare ticker like `sol` becomes `SOLUSDT`)
    and timeframes (default `15m 1h 4h 1d 1w`). Map the user's words: "scalping" → `1m 5m 15m 1h`,
    "intraday" → `15m 1h 4h`, "swing" → `1h 4h 1d 1w`, "jangka panjang / position" → `1d 1w 1M`.
-   Only change indicator parameters if the user asks (`--ema-fast --ema-slow --st-period --st-mult --swing`).
+   Only change indicator parameters if the user asks (`--ema-fast --ema-slow --rsi-len --stoch-len --stoch-k --stoch-d --swing`).
 
 2. **Run it from the repository root**, JSON for you to reason over:
 
@@ -36,8 +36,10 @@ Data: Binance public spot klines via `data-api.binance.vision` (fallback `api.bi
    - `confluence.bias`, `confluence.score_pct` (−100..+100) and `confluence.summary` — the headline.
    - Per TF: `ema.cross` (golden/death) and `ema.cross_bars_ago`; `ema.dist_fast_pct` /
      `dist_slow_pct` (price vs EMA 50/200; far from EMA = stretched); `ema.fast_slope_pct`.
-   - `supertrend.direction`, `supertrend.line` (dynamic stop / trailing level),
-     `supertrend.flip_bars_ago` (fresh flip = new momentum).
+   - `stoch_rsi.k` / `.d` / `.rsi`, `stoch_rsi.zone` (overbought ≥ 80 / oversold ≤ 20),
+     `stoch_rsi.momentum` (%K vs %D) and `stoch_rsi.last_cross` (`direction`, `bars_ago`, `zone`
+     before the cross). Use it as context for timing and stretch only: in the BTC backtest every
+     Stoch RSI-based trading rule lost to buy & hold. Oversold in a downtrend is not a buy signal.
    - `structure.bias` (direction of the latest BOS/CHoCH), `structure.swing_trend`
      (latest HH/HL vs LH/LL), `structure.last_break` (`kind`, `direction`, `level`, `bars_ago`),
      `structure.support` / `structure.resistance` (nearest swing levels).
@@ -46,17 +48,16 @@ Data: Binance public spot klines via `data-api.binance.vision` (fallback `api.bi
 
    - `timeframes["4h"].signals.A` / `.B` — status (`LONG`/`FLAT`, `since_bars`) of the two
      rules that survived the out-of-sample backtest on **BTC 4h** (`docs/formula.md`):
-     A = EMA 50 > EMA 200 (main), B = all components bullish, score +5 (conservative, lowest
+     A = EMA 50 > EMA 200 (main), B = market structure bullish AND close > EMA 200 (smaller
      drawdown). Always include `4h` in `--tf` so these are computed, and quote their backtest
      stats from `docs/formula.md` when relevant. For coins other than BTC, say the formulas
-     were tested on BTC only. Do not present 1h signals as a tested trading rule: on BTC 1h
-     none of the 200 rules beat buy & hold after costs.
+     were tested on BTC only. Do not present 1h signals as a tested trading rule.
 
 4. **Answer** in the user's language with:
    - one-line verdict (bias + confluence %) and last price;
    - the formula A / B status on 4h (LONG/FLAT and for how many bars);
-   - a compact table per symbol: TF | trend EMA | Supertrend | structure | key level;
-   - key levels to watch (nearest support/resistance, Supertrend line, EMA 50/200 on the HTF);
+   - a compact table per symbol: TF | trend EMA | Stoch RSI | structure | key level;
+   - key levels to watch (nearest support/resistance, EMA 50/200 on the HTF, structure levels that would flip the formulas);
    - scenarios: what confirms continuation, what invalidates it (e.g. "close 4h di atas X = CHoCH bullish");
    - closing disclaimer: not financial advice; indicators lag; use stop losses.
 

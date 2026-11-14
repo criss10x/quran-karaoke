@@ -1,4 +1,4 @@
-# Crypto MTF Analysis — EMA 50/200 · Supertrend · Market Structure
+# Crypto MTF Analysis — EMA 50/200 · Stoch RSI · Market Structure
 
 Analisa teknikal crypto **multi-timeframe** dari data candle live **Binance spot** (API publik,
 tanpa API key). Pure Python standard library — tidak perlu `pip install`.
@@ -8,7 +8,7 @@ Per timeframe dihitung:
 | Komponen | Detail |
 |---|---|
 | **EMA 50 / 200** | posisi harga vs EMA, golden/death cross + berapa bar lalu, slope EMA 50 |
-| **Supertrend (10, 3)** | arah, level garis (trailing stop), jarak %, kapan terakhir flip |
+| **Stoch RSI (14)** | RSI 14, %K/%D (14, 3, 3), zona overbought ≥ 80 / oversold ≤ 20, cross %K/%D terakhir dan zonanya |
 | **Market structure** | swing high/low → label HH/HL/LH/LL, **BOS** dan **CHoCH**, support/resistance terdekat |
 | **Skor & bias** | skor −5..+5 per TF, lalu **confluence** tertimbang lintas TF + ringkasan bahasa Indonesia |
 
@@ -22,19 +22,19 @@ python3 -m cta btc eth sol                       # ticker otomatis jadi ...USDT
 python3 -m cta ETHBTC --tf 1h 4h 1d              # pair apa pun di Binance spot
 python3 -m cta BTC --format json                 # JSON untuk diproses lanjut
 python3 -m cta BTC ETH --out report/a.md --json-out report/a.json
-python3 -m cta BTC --ema-fast 21 --ema-slow 55 --st-period 10 --st-mult 2 --swing 3
+python3 -m cta BTC --ema-fast 21 --ema-slow 55 --rsi-len 14 --stoch-len 14 --swing 3
 ```
 
-Contoh potongan output:
+Contoh potongan output (BTCUSDT, 14 Nov 2026):
 
 ```
 ## BTCUSDT
-**Harga terakhir:** 66,943.72 · **Confluence MTF:** Bearish (-42%)
-> Timeframe besar belum punya arah jelas; momentum jangka pendek turun. ...
+**Harga terakhir:** 67,027.20 · **Confluence MTF:** Strong Bearish (-77%)
+**Formula teruji backtest (4h):** A · EMA50/200 cross → FLAT sejak 123 bar · B · struktur bullish + close > EMA200 → FLAT sejak 53 bar
 
-| TF | Close | EMA50 | EMA200 | Cross | Supertrend | Struktur | BOS/CHoCH terakhir | ... | Skor | Bias |
-| 4h | 68,314.00 | 73,677.87 (-7.28%) | 77,810.39 (-12.20%) | Death (122b) | ▼ down @ 72,034.05 (50b) | Bearish / Bearish | BOS ↓ @ 72,727.27 (8b) | ... | -5 | Strong Bearish |
-| 1w | 74,851.44 | 78,432.03 (-4.57%) | 69,562.63 (+7.60%) | Golden | ▲ up @ 66,811.57 (9b) | Bullish / Range | CHoCH ↑ @ 82,850.00 (6b) | ... | +3 | Bullish |
+| TF | Close | EMA50 | EMA200 | Cross | Stoch RSI K/D | Struktur | BOS/CHoCH terakhir | ... | Skor | Bias |
+| 4h | 66,755.66 | 73,406.41 (-9.06%) | 77,700.37 (-14.09%) | Death (123b) | 18.2/22.7 ▼ oversold · cross ↓ 0b | Bearish / Bearish | BOS ↓ @ 72,727.27 (9b) | ... | -5 | Strong Bearish |
+| 1d | 68,314.00 | 78,208.69 (-12.65%) | 76,320.79 (-10.49%) | Golden (62b) | 1.9/4.3 ▼ oversold · cross ↓ 6b | Bearish / Bearish | BOS ↓ @ 79,800.00 (15b) | ... | -3 | Bearish |
 ```
 
 ## Hasil backtest BTC: formula yang direkomendasikan
@@ -46,11 +46,12 @@ laporan lengkap: [`docs/backtest.md`](docs/backtest.md).
 | BTC 4h, 2019 → Nov 2026 | Sharpe | CAGR | Max DD | Sharpe test 2024+ | DD test |
 |---|---|---|---|---|---|
 | Buy & hold | 0,92 | +44% | 77% | 0,58 | 53% |
-| **A · EMA 50 > EMA 200** (beli saat golden cross, jual saat death cross) | **1,34** | **+61%** | 59% | **0,91** | 31% |
-| **B · Semua komponen bullish** (skor +5, konservatif) | 1,32 | +43% | **40%** | 0,81 | **18%** |
+| **A · EMA 50 > EMA 200** (beli saat golden cross, jual saat death cross) | 1,34 | **+61%** | 59% | 0,91 | 31% |
+| **B · Struktur bullish + close > EMA 200** (drawdown lebih kecil) | **1,35** | +53% | **39%** | **1,02** | **26%** |
 
-- **4h** adalah timeframe terbaik untuk BTC. **1h** kalah dari buy & hold di semua 200 formula,
-  **1d** tidak meyakinkan.
+- **4h** adalah timeframe terbaik untuk BTC. **1h** dan **1d** tidak meyakinkan.
+- **Stoch RSI** tidak menambah keunggulan sebagai aturan beli/jual (semua formula berbasis
+  Stoch RSI kalah dari buy & hold di test). Di laporan ia dipakai sebagai konteks overbought/oversold.
 - Laporan live menampilkan status **LONG/FLAT** formula A dan B di 4h.
 - Batasan (satu aset, drawdown masih besar) ada di `docs/formula.md`.
 
@@ -75,8 +76,9 @@ python3 -m cta.research --symbols BTC --tf 1h 4h 1d --out docs/backtest.md --jso
 **EMA** — definisi TradingView `ta.ema` (α = 2/(n+1), di-seed SMA n bar pertama). Butuh ≥ 200
 candle tertutup untuk EMA 200; jika kurang (koin baru di TF besar) nilainya `null` dan komponen skornya 0.
 
-**Supertrend** — sama dengan `ta.supertrend(3, 10)`: ATR Wilder (RMA), band dari hl2, band
-hanya boleh menyempit selama tren berlaku. Di sini `up` = bullish (garis di bawah harga).
+**Stoch RSI** — sama dengan indikator "Stoch RSI" TradingView: RSI 14 (Wilder), stochastic 14
+atas nilai RSI, %K = SMA 3, %D = SMA 3. ≥ 80 overbought, ≤ 20 oversold. Komponen skornya +1 bila
+%K > %D (momentum naik), −1 bila %K < %D.
 
 **Market structure**
 - *Swing high* di bar *i*: high lebih tinggi dari `swing` bar sebelumnya dan tidak dilampaui
@@ -91,7 +93,7 @@ hanya boleh menyempit selama tren berlaku. Di sini `up` = bullish (garis di bawa
   dalam 300 bar terakhir.
 
 **Skor timeframe** (−5..+5), masing-masing ±1: close vs EMA 50, close vs EMA 200, EMA 50 vs
-EMA 200, arah Supertrend, bias struktur. Label: ≥ +4 Strong Bullish, ≥ +2 Bullish, −1..+1 Neutral,
+EMA 200, momentum Stoch RSI (%K vs %D), bias struktur. Label: ≥ +4 Strong Bullish, ≥ +2 Bullish, −1..+1 Neutral,
 ≤ −2 Bearish, ≤ −4 Strong Bearish.
 
 **Confluence** (−100%..+100%) = rata-rata skor tertimbang (15m 1 · 1h 1.5 · 4h 2 · 1d 2.5 · 1w 3).
